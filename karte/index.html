@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<title>Daniel Tiefenbrunn — AR Visitenkarte</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:opsz,wght@6..96,400;6..96,500&family=Archivo:wght@400;500;600&display=swap" rel="stylesheet">
+
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
+
+<style>
+  :root{
+    --petrol:#0F3746;
+    --petrol-deep:#082330;
+    --stone:#B9BCBF;
+    --stone-light:#D6D8D9;
+    --ink:#0B0B0C;
+    --ring:rgba(214,216,217,.55);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--ink);color:var(--stone-light);
+    font-family:"Archivo",system-ui,sans-serif;overscroll-behavior:none}
+  a{color:inherit}
+
+  /* ---------- AR-Bühne ---------- */
+  a-scene{position:fixed;inset:0}
+
+  /* ---------- Overlay ---------- */
+  #ui{position:fixed;inset:0;pointer-events:none;display:flex;flex-direction:column;
+      justify-content:space-between;padding:env(safe-area-inset-top) 20px calc(24px + env(safe-area-inset-bottom))}
+
+  .eyebrow{margin-top:22px;font-size:11px;letter-spacing:.34em;text-transform:uppercase;
+    color:var(--stone);opacity:.85}
+
+  /* Statuszeile: sagt immer, was als Nächstes zu tun ist */
+  #status{align-self:flex-start;pointer-events:none;
+    background:rgba(8,35,48,.62);backdrop-filter:blur(14px);
+    border:1px solid rgba(185,188,191,.22);border-radius:999px;
+    padding:9px 16px;font-size:12px;letter-spacing:.06em;
+    transition:opacity .4s ease}
+  #status.hide{opacity:0}
+
+  /* Signature: die Ringe der Karte als Bedienelemente */
+  #dock{display:flex;flex-direction:column;align-items:center;gap:18px;
+        opacity:0;transform:translateY(14px);transition:opacity .45s ease,transform .45s ease}
+  #dock.on{opacity:1;transform:none;pointer-events:auto}
+
+  #identity{text-align:center;line-height:1.35}
+  #identity .name{font-family:"Bodoni Moda",serif;font-size:23px;letter-spacing:.04em;color:#fff}
+  #identity .role{font-size:10px;letter-spacing:.28em;text-transform:uppercase;color:var(--stone);margin-top:6px}
+  #identity .role sup{font-size:.68em;letter-spacing:.12em;vertical-align:super;margin-left:.12em}
+
+  .row{display:flex;gap:26px;justify-content:center}
+
+  .ring{width:78px;height:78px;border-radius:50%;border:1px solid var(--ring);
+    background:radial-gradient(120% 120% at 30% 20%,rgba(15,55,70,.92),rgba(8,35,48,.98));
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
+    color:var(--stone-light);cursor:pointer;
+    transition:transform .18s ease,border-color .18s ease}
+  .ring:active{transform:scale(.93);border-color:#fff}
+  .ring:focus-visible{outline:2px solid #fff;outline-offset:4px}
+  .ring svg{width:26px;height:26px;stroke:currentColor;fill:none;stroke-width:1.2;
+    stroke-linecap:round;stroke-linejoin:round}
+  .ring span{font-size:8.5px;letter-spacing:.18em;text-transform:uppercase;opacity:.8}
+
+  .back{font-size:10px;letter-spacing:.28em;text-transform:uppercase;color:var(--stone);
+    background:none;border:0;padding:10px;cursor:pointer;opacity:.75}
+
+  .hidden{display:none !important}
+
+  /* Startkarte: erscheint vor Kamerastart und als Fallback ohne AR */
+  #gate{position:fixed;inset:0;z-index:20;background:var(--ink);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:28px;padding:32px;text-align:center}
+  #gate h1{font-family:"Bodoni Moda",serif;font-weight:400;font-size:34px;margin:0;color:#fff;letter-spacing:.02em}
+  #gate p{max-width:30ch;font-size:13px;line-height:1.7;color:var(--stone);margin:0}
+  .cta{pointer-events:auto;border:1px solid var(--ring);background:transparent;color:#fff;
+    border-radius:999px;padding:15px 30px;font-family:"Archivo",sans-serif;
+    font-size:11px;letter-spacing:.26em;text-transform:uppercase;cursor:pointer}
+  .cta:active{background:rgba(185,188,191,.12)}
+  .ghost{border:0;color:var(--stone);font-size:11px;letter-spacing:.2em;text-transform:uppercase;
+    background:none;cursor:pointer;pointer-events:auto;text-decoration:underline;text-underline-offset:5px}
+
+  @media (prefers-reduced-motion:reduce){*{transition:none !important;animation:none !important}}
+</style>
+</head>
+<body>
+
+<!-- =========================================================
+     1) KONFIGURATION — nur dieser Block muss angepasst werden
+     ========================================================= -->
+<script>
+const CONFIG = {
+  firstName : "Daniel",
+  lastName  : "Tiefenbrunn",
+  role      : "Ing. a Dipl. BW",             // Haupttitel
+  roleSuper : "WU",                          // wird hochgestellt dargestellt
+  company   : "",                            // bewusst leer — kein Firmenname
+  claim     : "It's all about Business Creativity",
+
+  phone        : "+4369917136969",           // E.164, wird so gewählt
+  phoneDisplay : "+43 699 171 36 969",       // so wird es angezeigt
+  email        : "d.tiefenbrunn@gmx.net",
+  linkedin     : "https://www.linkedin.com/in/daniel-tiefenbrunn-3b9b06198",
+
+  street    : "",                            // optional
+  city      : "",
+  zip       : "",
+  country   : "Österreich",
+
+  // Pfad zur kompilierten Bildmarke (siehe ANLEITUNG.md, Schritt 1)
+  targetSrc : "./target.mind"
+};
+</script>
+
+<!-- =========================================================
+     2) AR-SZENE
+     ========================================================= -->
+<a-scene id="scene"
+  mindar-image="imageTargetSrc: #TARGET#; autoStart: false; uiScanning: no; uiLoading: no; uiError: no; filterMinCF: 0.0001; filterBeta: 0.005"
+  color-space="sRGB" renderer="colorManagement: true, physicallyCorrectLights"
+  vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false"
+  embedded>
+
+  <a-camera position="0 0 0" look-controls="enabled: false"
+            cursor="fuse: false; rayOrigin: mouse"
+            raycaster="objects: .clickable"></a-camera>
+
+  <a-entity id="target" mindar-image-target="targetIndex: 0">
+
+    <!-- Szene 1 — über der Karte schwebender Ring + zwei Aktionen -->
+    <a-entity id="ar-scene-1">
+      <a-ring color="#D6D8D9" radius-inner="0.30" radius-outer="0.305"
+              position="0 0 0.02" opacity="0.9"></a-ring>
+      <a-circle class="clickable" data-act="web" radius="0.075"
+                position="-0.17 -0.20 0.03" color="#0F3746" opacity="0.92"></a-circle>
+      <a-circle class="clickable" data-act="next" radius="0.075"
+                position="0.17 -0.20 0.03" color="#0F3746" opacity="0.92"></a-circle>
+      <a-text value="LINKEDIN" align="center" width="1.4" color="#D6D8D9"
+              position="-0.17 -0.20 0.04"></a-text>
+      <a-text value="KONTAKT" align="center" width="1.4" color="#D6D8D9"
+              position="0.17 -0.20 0.04"></a-text>
+    </a-entity>
+
+    <!-- Szene 2 — Kontaktebene -->
+    <a-entity id="ar-scene-2" visible="false">
+      <a-text id="ar-name" value="" align="center" width="1.9" color="#FFFFFF"
+              position="0 0.16 0.03"></a-text>
+      <a-text id="ar-role" value="" align="center" width="1.1" color="#B9BCBF"
+              position="0 0.04 0.03"></a-text>
+      <a-circle class="clickable" data-act="call" radius="0.075"
+                position="-0.17 -0.20 0.03" color="#0F3746" opacity="0.92"></a-circle>
+      <a-circle class="clickable" data-act="vcard" radius="0.075"
+                position="0.17 -0.20 0.03" color="#0F3746" opacity="0.92"></a-circle>
+      <a-text value="ANRUF" align="center" width="1.4" color="#D6D8D9"
+              position="-0.17 -0.20 0.04"></a-text>
+      <a-text value="SPEICHERN" align="center" width="1.4" color="#D6D8D9"
+              position="0.17 -0.20 0.04"></a-text>
+    </a-entity>
+
+  </a-entity>
+</a-scene>
+
+<!-- =========================================================
+     3) OVERLAY — die verlässlichen Tap-Ziele
+     ========================================================= -->
+<div id="ui">
+  <div>
+    <div class="eyebrow" id="brand"></div>
+  </div>
+
+  <div>
+    <div id="status">Karte ins Bild halten</div>
+
+    <div id="dock" style="margin-top:16px">
+      <div id="identity" class="hidden">
+        <div class="name"></div>
+        <div class="role"></div>
+      </div>
+
+      <!-- Szene 1 -->
+      <div class="row" id="dock-1">
+        <button class="ring" data-act="web" aria-label="LinkedIn-Profil öffnen">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3.5 9h17M3.5 15h17"/></svg>
+          <span>LinkedIn</span>
+        </button>
+        <button class="ring" data-act="next" aria-label="Kontaktebene öffnen">
+          <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><circle cx="8.5" cy="11" r="2"/><path d="M5 16c.8-1.6 2-2.4 3.5-2.4S11.2 14.4 12 16M15 10h4M15 13.5h4"/></svg>
+          <span>Karte</span>
+        </button>
+      </div>
+
+      <!-- Szene 2 -->
+      <div class="row hidden" id="dock-2">
+        <button class="ring" data-act="call" aria-label="Anrufen">
+          <svg viewBox="0 0 24 24"><path d="M6.5 3.5h3l1.5 4-2 1.5a12 12 0 006 6l1.5-2 4 1.5v3a2 2 0 01-2.2 2A17 17 0 014.5 5.7 2 2 0 016.5 3.5z"/></svg>
+          <span>Anrufen</span>
+        </button>
+        <button class="ring" data-act="vcard" aria-label="Kontakt speichern">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19c1.3-3.2 3.7-4.8 6.5-4.8s5.2 1.6 6.5 4.8"/></svg>
+          <span>Speichern</span>
+        </button>
+      </div>
+
+      <button class="back hidden" id="btn-back">← zurück</button>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================
+     4) STARTKARTE / FALLBACK
+     ========================================================= -->
+<div id="gate">
+  <div class="eyebrow" id="gate-eyebrow"></div>
+  <h1 id="gate-name"></h1>
+  <p id="gate-claim"></p>
+  <button class="cta" id="btn-start">Kamera starten</button>
+  <button class="ghost" id="btn-skip">Ohne AR fortfahren</button>
+</div>
+
+<!-- =========================================================
+     5) LOGIK
+     ========================================================= -->
+<script>
+(function () {
+  const $  = (s) => document.querySelector(s);
+  const $$ = (s) => Array.from(document.querySelectorAll(s));
+
+  // Target-Pfad aus CONFIG in die Szene schreiben
+  const sceneEl = $('#scene');
+  sceneEl.setAttribute('mindar-image',
+    sceneEl.getAttribute('mindar-image').replace('#TARGET#', CONFIG.targetSrc));
+
+  // Texte aus CONFIG befüllen
+  const fullName = CONFIG.firstName + ' ' + CONFIG.lastName;
+  // Titel in zwei Fassungen: hochgestellt fürs Overlay, flach für 3D-Text und Kontaktdatei
+  const roleHTML  = CONFIG.roleSuper
+    ? CONFIG.role + '<sup>' + CONFIG.roleSuper + '</sup>' : CONFIG.role;
+  const rolePlain = CONFIG.roleSuper
+    ? CONFIG.role + ' (' + CONFIG.roleSuper + ')' : CONFIG.role;
+
+  const brandLine = CONFIG.company || rolePlain;
+  $('#brand').textContent        = brandLine;
+  $('#gate-eyebrow').textContent = brandLine;
+  $('#gate-name').textContent    = fullName;
+  $('#gate-claim').textContent   = CONFIG.claim;
+  $('#identity .name').textContent = fullName;
+  $('#identity .role').innerHTML   = roleHTML;
+  $('#ar-name').setAttribute('value', fullName.toUpperCase());
+  $('#ar-role').setAttribute('value', rolePlain);
+
+  // ---------- Aktionen ----------
+  const actions = {
+    web()  { window.open(CONFIG.linkedin, '_blank', 'noopener'); },
+
+    call() { window.location.href = 'tel:' + CONFIG.phone.replace(/[^\d+]/g, ''); },
+
+    vcard() {
+      const hasAddress = CONFIG.street || CONFIG.city || CONFIG.zip;
+      const v = [
+        'BEGIN:VCARD', 'VERSION:3.0',
+        'N:' + CONFIG.lastName + ';' + CONFIG.firstName + ';;;',
+        'FN:' + fullName,
+        CONFIG.company ? 'ORG:' + CONFIG.company : null,
+        CONFIG.role    ? 'TITLE:' + rolePlain : null,
+        'TEL;TYPE=CELL,VOICE:' + CONFIG.phone,
+        'EMAIL;TYPE=INTERNET,HOME:' + CONFIG.email,
+        'URL;TYPE=LinkedIn:' + CONFIG.linkedin,
+        hasAddress ? 'ADR;TYPE=WORK:;;' + CONFIG.street + ';' + CONFIG.city + ';;' + CONFIG.zip + ';' + CONFIG.country : null,
+        'NOTE:' + CONFIG.claim,
+        'END:VCARD'
+      ].filter(Boolean).join('\r\n');
+
+      const blob = new Blob([v], { type: 'text/vcard;charset=utf-8' });
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url;
+      a.download = CONFIG.lastName + '_' + CONFIG.firstName + '.vcf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    },
+
+    next() { setStep(2); },
+    back() { setStep(1); }
+  };
+
+  // ---------- Szenenwechsel ----------
+  function setStep(n) {
+    $('#dock-1').classList.toggle('hidden', n !== 1);
+    $('#dock-2').classList.toggle('hidden', n !== 2);
+    $('#btn-back').classList.toggle('hidden', n !== 2);
+    $('#identity').classList.toggle('hidden', n !== 2);
+    $('#ar-scene-1').setAttribute('visible', n === 1);
+    $('#ar-scene-2').setAttribute('visible', n === 2);
+  }
+
+  // ---------- Eventbindung: Overlay + 3D-Objekte ----------
+  function bind(el) {
+    const act = el.dataset.act || el.getAttribute('data-act');
+    if (!act || !actions[act]) return;
+    el.addEventListener('click', (e) => { e.preventDefault(); actions[act](); });
+  }
+  $$('[data-act]').forEach(bind);
+  $('#btn-back').addEventListener('click', actions.back);
+
+  // ---------- Trackingstatus ----------
+  const dock = $('#dock'), status = $('#status');
+  $('#target').addEventListener('targetFound', () => {
+    dock.classList.add('on');
+    status.classList.add('hide');
+  });
+  $('#target').addEventListener('targetLost', () => {
+    dock.classList.remove('on');
+    status.textContent = 'Karte ins Bild halten';
+    status.classList.remove('hide');
+  });
+
+  // ---------- Start ----------
+  $('#btn-start').addEventListener('click', async () => {
+    $('#gate').classList.add('hidden');
+    try {
+      await sceneEl.systems['mindar-image-system'].start();
+    } catch (err) {
+      status.textContent = 'Kamera nicht verfügbar — Buttons unten funktionieren trotzdem';
+      dock.classList.add('on');
+    }
+  });
+
+  $('#btn-skip').addEventListener('click', () => {
+    $('#gate').classList.add('hidden');
+    sceneEl.classList.add('hidden');
+    status.textContent = CONFIG.claim;
+    dock.classList.add('on');
+  });
+
+  setStep(1);
+})();
+</script>
+</body>
+</html>
