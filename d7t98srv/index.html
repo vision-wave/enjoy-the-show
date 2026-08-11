@@ -203,7 +203,9 @@ const CONFIG = {
   vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false"
   embedded>
 
-  <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+  <a-camera position="0 0 0" look-controls="enabled: false"
+            cursor="fuse: false; rayOrigin: mouse"
+            raycaster="objects: .ar-hit; far: 100"></a-camera>
 
   <!-- Zielraum: die Karte ist 1 Einheit breit, 0.5715 hoch (3281:1875).
        Sie reicht also von x -0.5…+0.5 und y -0.286…+0.286.
@@ -225,6 +227,15 @@ const CONFIG = {
     <a-entity id="ar-scene-2" visible="false">
       <a-image src="./panel-2.jpg" width="1" height="0.42"
                position="0 -0.496 0.002" material="shader: flat"></a-image>
+
+      <!-- Unsichtbare Trefferflächen, deckungsgleich mit den Textzeilen im Panel.
+           Sie leuchten beim Antippen kurz auf, damit der Treffer sichtbar wird. -->
+      <a-plane class="ar-hit" data-act="call"
+               width="0.46" height="0.075" position="0 -0.4634 0.004"
+               material="shader: flat; color: #0E4C60; transparent: true; opacity: 0"></a-plane>
+      <a-plane class="ar-hit" data-act="mail"
+               width="0.38" height="0.060" position="0 -0.5492 0.004"
+               material="shader: flat; color: #0E4C60; transparent: true; opacity: 0"></a-plane>
     </a-entity>
 
   </a-entity>
@@ -442,6 +453,14 @@ const CONFIG = {
     el.addEventListener('click', (e) => { e.preventDefault(); actions[act](); });
   }
   $$('[data-act]').forEach(bind);
+
+  // Trefferflächen im Bildtrack: erst Rückmeldung, dann Aktion
+  $$('.ar-hit').forEach(el => {
+    el.addEventListener('click', () => {
+      el.setAttribute('material', 'opacity', 0.22);
+      setTimeout(() => el.setAttribute('material', 'opacity', 0), 260);
+    });
+  });
 
   // ---------- Trackingstatus ----------
   const dock = $('#dock'), status = $('#status');
