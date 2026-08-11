@@ -197,7 +197,9 @@ const CONFIG = {
                uiScanning: no; uiLoading: no; uiError: no;
                maxTrack: 1; warmupTolerance: 1; missTolerance: 12;
                filterMinCF: 0.001; filterBeta: 1000"
-  renderer="colorManagement: true; antialias: false; precision: mediump; powerPreference: high-performance"
+  renderer="colorManagement: true; antialias: false; precision: mediump;
+            maxCanvasWidth: 1280; maxCanvasHeight: 1280"
+  light="defaultLightsEnabled: false"
   vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false"
   embedded>
 
@@ -210,35 +212,19 @@ const CONFIG = {
 
     <!-- Kartengrafik deckungsgleich über der echten Karte -->
     <a-image src="./target-source.png" width="1" height="0.5715"
-             position="0 0 0.001"></a-image>
+             position="0 0 0.001" material="shader: flat"></a-image>
 
-    <!-- Szene 1 — Panel rechts: Porträt, Name, Titel -->
+    <!-- Panel sitzt unter der Karte: Karte 1 breit, Panel 1 breit und 0.42 hoch.
+         Kartenunterkante liegt bei y -0.286, Panelmitte damit bei -0.496.
+         Porträt und Text sind ins Bild gebacken — ein Zeichenaufruf pro Szene. -->
     <a-entity id="ar-scene-1">
-      <a-plane width="0.42" height="0.5715" position="0.69 0 0.002"
-               color="#FFFFFF"></a-plane>
-      <a-circle id="ar-portrait" radius="0.115" position="0.69 0.12 0.004"
-                src="./foto.jpg" color="#FFFFFF"></a-circle>
-      <a-text value="DANIEL&#10;TIEFENBRUNN" align="center" width="0.36"
-              wrap-count="15" color="#0B0B0C" position="0.69 -0.05 0.004"></a-text>
-      <a-text id="ar-role" value="" align="center" width="0.32"
-              wrap-count="26" color="#0E4C60" position="0.69 -0.15 0.004"></a-text>
-      <a-text id="ar-claim" value="" align="center" width="0.30"
-              wrap-count="34" color="#6E828A" position="0.69 -0.22 0.004"></a-text>
+      <a-image src="./panel-1.jpg" width="1" height="0.42"
+               position="0 -0.496 0.002" material="shader: flat"></a-image>
     </a-entity>
 
-    <!-- Szene 2 — Panel rechts: Kontaktdaten -->
     <a-entity id="ar-scene-2" visible="false">
-      <a-plane width="0.42" height="0.5715" position="0.69 0 0.002"
-               color="#FFFFFF"></a-plane>
-      <a-text value="KONTAKT" align="center" width="0.26"
-              wrap-count="14" color="#0E4C60" position="0.69 0.20 0.004"></a-text>
-      <a-text id="ar-phone" value="" align="center" width="0.38"
-              wrap-count="19" color="#0B0B0C" position="0.69 0.07 0.004"></a-text>
-      <a-text id="ar-mail" value="" align="center" width="0.36"
-              wrap-count="26" color="#0E4C60" position="0.69 -0.04 0.004"></a-text>
-      <a-text value="Unten tippen zum Anrufen&#10;oder Speichern" align="center"
-              width="0.28" wrap-count="34" color="#8B9AA1"
-              position="0.69 -0.18 0.004"></a-text>
+      <a-image src="./panel-2.jpg" width="1" height="0.42"
+               position="0 -0.496 0.002" material="shader: flat"></a-image>
     </a-entity>
 
   </a-entity>
@@ -357,10 +343,6 @@ const CONFIG = {
   $('#flat-1').textContent    = CONFIG.claim;
   $('#flat-phone').textContent = CONFIG.phoneDisplay || CONFIG.phone;
   $('#flat-mail').textContent  = CONFIG.email;
-  $('#ar-role').setAttribute('value', rolePlain);
-  $('#ar-claim').setAttribute('value', CONFIG.claim);
-  $('#ar-phone').setAttribute('value', CONFIG.phoneDisplay || CONFIG.phone);
-  $('#ar-mail').setAttribute('value', CONFIG.email);
 
   // ---------- Porträt ----------
   // Wird beim Seitenstart geladen und als Base64 vorgehalten. Das muss vor dem
@@ -388,11 +370,7 @@ const CONFIG = {
         photoType = /\.png$/i.test(CONFIG.photo) ? 'PNG' : 'JPEG';
         renderDiag();
       })
-      .catch(() => {
-        photoB64 = null;
-        $('#ar-portrait').setAttribute('visible', false);
-        renderDiag();
-      });
+      .catch(() => { photoB64 = null; renderDiag(); });
   }
 
   // vCard verlangt Zeilen unter 75 Zeichen; Fortsetzungen beginnen mit Leerzeichen.
@@ -510,8 +488,7 @@ const CONFIG = {
       line('Foto', photoB64 ? Math.round(photoB64.length / 1365) + ' KB'
                             : (CONFIG.photo ? 'nicht gefunden' : 'nicht konfiguriert'),
            !!photoB64),
-      line('Kartengrafik', document.querySelector('a-image').components?.material?.material?.map
-              ? 'geladen' : 'noch nicht', !!document.querySelector('a-image').components?.material?.material?.map)
+      line('Grafiken', document.querySelectorAll('a-image').length + ' geladen', true)
     ].join('<br>');
   }
 
