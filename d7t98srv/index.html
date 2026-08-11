@@ -74,7 +74,7 @@
 
   /* Kopfleiste: immer erreichbar, auch wenn die Karte nicht erkannt wird */
   #topbar{display:flex;align-items:center;justify-content:space-between;
-    margin-top:18px;pointer-events:auto}
+    margin-top:22px;pointer-events:auto}
   .chip{border:1px solid rgba(185,188,191,.28);background:rgba(9,53,69,.66);
     backdrop-filter:blur(14px);border-radius:999px;color:var(--stone-light);
     padding:9px 15px;font-family:"Archivo",sans-serif;font-size:10px;
@@ -114,7 +114,8 @@
 
   /* ---------- Kartenansicht ohne Kamera ---------- */
   #ui.flat{justify-content:center}
-  #ui.flat #lower{display:flex;flex-direction:column;align-items:center}
+  #ui.flat #lower{display:flex;flex-direction:column;align-items:center;
+    padding-top:34px}
   #ui.flat #status{display:none}
 
   #flat{pointer-events:auto;display:flex;flex-direction:column;align-items:center;
@@ -128,11 +129,15 @@
   .flat-role{font-size:10px;letter-spacing:.28em;text-transform:uppercase;
     color:var(--stone);margin-top:7px}
   .flat-role sup{font-size:.68em;letter-spacing:.12em;vertical-align:super;margin-left:.12em}
-  .flat-claim{font-size:13px;line-height:1.7;color:var(--stone);margin:16px 0 0;max-width:30ch;
+  /* Der Wechselbereich ist so hoch wie sein größter Inhalt (zwei Kontaktzeilen).
+     Damit steht die Ringreihe in beiden Ebenen an derselben Stelle. */
+  #flat-swap{width:100%;min-height:132px;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;margin-top:16px}
+  .flat-claim{font-size:13px;line-height:1.7;color:var(--stone);margin:0;max-width:30ch;
     text-align:center}
 
   /* Kontaktzeilen — hier tragen sie die Angaben, die sonst im Bildtrack stehen */
-  .flat-lines{display:flex;flex-direction:column;gap:9px;margin-top:18px;width:100%}
+  .flat-lines{display:flex;flex-direction:column;gap:9px;width:100%}
   .line{display:block;text-align:center;pointer-events:auto;cursor:pointer;text-decoration:none;
     background:rgba(14,76,96,.5);border:1px solid rgba(185,188,191,.26);border-radius:999px;
     padding:12px 20px;font-size:13.5px;letter-spacing:.02em;color:#fff}
@@ -189,7 +194,9 @@ const CONFIG = {
   // Empfehlung: quadratisch, ca. 600 × 600 px, unter 150 KB.
   photo      : "./foto.jpg",        // quadratisch — Kontaktdatei und AR-Panel
   photoStart : "./foto-start.webp",
-  cardImage  : "./target-source.png", // Kartenabbildung für die Ansicht ohne Kamera // freigestellt — großes Bild auf der Startseite
+  // Kartenabbildung in der Ansicht ohne Kamera, je Ebene ein eigenes Motiv
+  cardFlat1  : "./flat-1.jpg",   // Übersicht
+  cardFlat2  : "./flat-2.jpg",   // Kontaktdaten
 
   // Pfad zur kompilierten Bildmarke (siehe ANLEITUNG.md, Schritt 1)
   targetSrc : "./target.mind",
@@ -291,10 +298,15 @@ AFRAME.registerComponent('smoothed-anchor', {
   <a-entity id="anchor" smoothed-anchor="src: #target" visible="false">
 
     <!-- Kartengrafik deckungsgleich über der echten Karte -->
-    <!-- Weiche Außenkante: ein kleiner Lagefehler zeigt sich als sanfter
+    <!-- Zwei Überlagerungen, deckungsgleich mit der echten Karte. Sichtbar ist
+         immer nur eine — sie wechselt mit der Ebene, die Karte "dreht sich um".
+         Weiche Außenkante: ein kleiner Lagefehler zeigt sich als sanfter
          Übergang statt als doppelte Kante. -->
-    <a-image src="./card-overlay.webp" width="1" height="0.5715"
+    <a-image id="ar-card-1" src="./overlay-1.webp" width="1" height="0.5715"
              position="0 0 0.001"
+             material="shader: flat; transparent: true"></a-image>
+    <a-image id="ar-card-2" src="./overlay-2.webp" width="1" height="0.5715"
+             position="0 0 0.0011" visible="false"
              material="shader: flat; transparent: true"></a-image>
 
     <!-- Panel sitzt unter der Karte: Karte 1 breit, Panel 1 breit und 0.42 hoch.
@@ -342,10 +354,14 @@ AFRAME.registerComponent('smoothed-anchor', {
       <img id="flat-portrait" alt="">
       <div class="flat-name"></div>
       <div class="flat-role"></div>
-      <p class="flat-claim" id="flat-1"></p>
-      <div class="flat-lines hidden" id="flat-2">
-        <a class="line" data-act="call"  id="flat-phone"></a>
-        <a class="line" data-act="mail" id="flat-mail"></a>
+      <!-- Fester Rahmen für den wechselnden Teil. Ohne ihn säßen die Ringe
+           unten in Ebene 1 und 2 auf verschiedenen Höhen. -->
+      <div id="flat-swap">
+        <p class="flat-claim" id="flat-1"></p>
+        <div class="flat-lines hidden" id="flat-2">
+          <a class="line" data-act="call" id="flat-phone"></a>
+          <a class="line" data-act="mail" id="flat-mail"></a>
+        </div>
       </div>
     </div>
 
@@ -437,7 +453,7 @@ AFRAME.registerComponent('smoothed-anchor', {
   $('#gate-claim').textContent   = CONFIG.claim;
   $('#identity .name').textContent = fullName;
   $('#identity .role').innerHTML   = roleHTML;
-  $('#flat-card').src        = CONFIG.cardImage || './target-source.png';
+  $('#flat-card').src        = CONFIG.cardFlat1;
   $('.flat-name').textContent = fullName;
   $('.flat-role').innerHTML   = roleHTML;
   $('#flat-1').textContent    = CONFIG.claim;
@@ -533,8 +549,13 @@ AFRAME.registerComponent('smoothed-anchor', {
     $('#identity').classList.toggle('hidden', n !== 2 || flatMode);
     $('#flat-1').classList.toggle('hidden', n !== 1);
     $('#flat-2').classList.toggle('hidden', n !== 2);
+    const card = $('#flat-card');
+    const want = n === 2 ? CONFIG.cardFlat2 : CONFIG.cardFlat1;
+    if (card && !card.src.endsWith(want.replace('./', ''))) card.src = want;
     $('#ar-scene-1').setAttribute('visible', n === 1);
     $('#ar-scene-2').setAttribute('visible', n === 2);
+    $('#ar-card-1').setAttribute('visible', n === 1);
+    $('#ar-card-2').setAttribute('visible', n === 2);
   }
 
   // ---------- Eventbindung: Overlay + 3D-Objekte ----------
