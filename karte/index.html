@@ -23,9 +23,17 @@
     --ring:rgba(214,216,217,.55);
   }
   *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-  html,body{margin:0;height:100%;background:var(--ink);color:var(--stone-light);
+  /* Nur html bekommt eine Farbe. Ein Hintergrund auf body würde das Kamerabild
+     verdecken — MindAR legt das Video mit negativem z-index dahinter. */
+  html{background:var(--ink)}
+  html,body{margin:0;height:100%;color:var(--stone-light);
     font-family:"Archivo",system-ui,sans-serif;overscroll-behavior:none}
+  body{background:transparent}
   a{color:inherit}
+
+  /* Kamerabild formatfüllend */
+  body > video{position:fixed !important;inset:0 !important;
+    width:100vw !important;height:100vh !important;object-fit:cover !important}
 
   /* ---------- AR-Bühne ---------- */
   a-scene{position:fixed;inset:0}
@@ -112,6 +120,10 @@ const CONFIG = {
   zip       : "",
   country   : "Österreich",
 
+  // Porträt: Datei neben index.html legen. Leer lassen = ohne Foto.
+  // Empfehlung: quadratisch, ca. 600 × 600 px, unter 150 KB.
+  photo     : "./foto.jpg",
+
   // Pfad zur kompilierten Bildmarke (siehe ANLEITUNG.md, Schritt 1)
   targetSrc : "./target.mind"
 };
@@ -126,40 +138,32 @@ const CONFIG = {
   vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false"
   embedded>
 
-  <a-camera position="0 0 0" look-controls="enabled: false"
-            cursor="fuse: false; rayOrigin: mouse"
-            raycaster="objects: .clickable"></a-camera>
+  <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
+  <!-- Zielraum: Breite = 1 Einheit, Höhe = 0.571 (Seitenverhältnis der Karte).
+       Die Karte reicht also von y -0.286 bis +0.286. Alles darüber schwebt frei. -->
   <a-entity id="target" mindar-image-target="targetIndex: 0">
 
-    <!-- Szene 1 — über der Karte schwebender Ring + zwei Aktionen -->
+    <!-- Szene 1 — Namenszug über der Karte -->
     <a-entity id="ar-scene-1">
-      <a-ring color="#D6D8D9" radius-inner="0.30" radius-outer="0.305"
-              position="0 0 0.02" opacity="0.9"></a-ring>
-      <a-circle class="clickable" data-act="web" radius="0.075"
-                position="-0.17 -0.20 0.03" color="#0F3746" opacity="0.92"></a-circle>
-      <a-circle class="clickable" data-act="next" radius="0.075"
-                position="0.17 -0.20 0.03" color="#0F3746" opacity="0.92"></a-circle>
-      <a-text value="LINKEDIN" align="center" width="1.4" color="#D6D8D9"
-              position="-0.17 -0.20 0.04"></a-text>
-      <a-text value="KONTAKT" align="center" width="1.4" color="#D6D8D9"
-              position="0.17 -0.20 0.04"></a-text>
+      <a-plane width="0.86" height="0.20" position="0 0.42 0"
+               color="#0F3746" opacity="0.88"></a-plane>
+      <a-text id="ar-name" value="" align="center" width="0.80" color="#FFFFFF"
+              position="0 0.46 0.01"></a-text>
+      <a-text id="ar-role" value="" align="center" width="0.48" color="#B9BCBF"
+              position="0 0.385 0.01"></a-text>
     </a-entity>
 
-    <!-- Szene 2 — Kontaktebene -->
+    <!-- Szene 2 — Kontaktdaten über der Karte -->
     <a-entity id="ar-scene-2" visible="false">
-      <a-text id="ar-name" value="" align="center" width="1.9" color="#FFFFFF"
-              position="0 0.16 0.03"></a-text>
-      <a-text id="ar-role" value="" align="center" width="1.1" color="#B9BCBF"
-              position="0 0.04 0.03"></a-text>
-      <a-circle class="clickable" data-act="call" radius="0.075"
-                position="-0.17 -0.20 0.03" color="#0F3746" opacity="0.92"></a-circle>
-      <a-circle class="clickable" data-act="vcard" radius="0.075"
-                position="0.17 -0.20 0.03" color="#0F3746" opacity="0.92"></a-circle>
-      <a-text value="ANRUF" align="center" width="1.4" color="#D6D8D9"
-              position="-0.17 -0.20 0.04"></a-text>
-      <a-text value="SPEICHERN" align="center" width="1.4" color="#D6D8D9"
-              position="0.17 -0.20 0.04"></a-text>
+      <a-plane width="0.86" height="0.26" position="0 0.44 0"
+               color="#0F3746" opacity="0.88"></a-plane>
+      <a-text id="ar-phone" value="" align="center" width="0.56" color="#FFFFFF"
+              position="0 0.50 0.01"></a-text>
+      <a-text id="ar-mail"  value="" align="center" width="0.50" color="#D6D8D9"
+              position="0 0.43 0.01"></a-text>
+      <a-text value="Unten tippen zum Anrufen oder Speichern" align="center"
+              width="0.40" color="#8FA3AC" position="0 0.365 0.01"></a-text>
     </a-entity>
 
   </a-entity>
@@ -252,6 +256,8 @@ const CONFIG = {
   $('#identity .role').innerHTML   = roleHTML;
   $('#ar-name').setAttribute('value', fullName.toUpperCase());
   $('#ar-role').setAttribute('value', rolePlain);
+  $('#ar-phone').setAttribute('value', CONFIG.phoneDisplay || CONFIG.phone);
+  $('#ar-mail').setAttribute('value', CONFIG.email);
 
   // ---------- Aktionen ----------
   const actions = {
