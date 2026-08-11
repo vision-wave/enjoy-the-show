@@ -82,11 +82,21 @@
   .chip:active{border-color:#fff}
 
   /* Statusanzeige */
-  #diag{margin-top:12px;pointer-events:auto;
-    background:rgba(9,53,69,.92);backdrop-filter:blur(16px);
-    border:1px solid rgba(185,188,191,.24);border-radius:14px;padding:14px 16px;
+  /* Eigene Ebene über allem. Vorher hing das Fenster im Seitenfluss und
+     verschob beim Öffnen die Kopfleiste — der Schließen-Tipp ging dann daneben. */
+  #diag-layer{position:fixed;inset:0;z-index:30;pointer-events:auto;
+    background:rgba(6,20,26,.72);backdrop-filter:blur(6px);
+    display:flex;align-items:center;justify-content:center;padding:24px}
+  #diag{width:100%;max-width:340px;
+    background:rgba(9,53,69,.96);
+    border:1px solid rgba(185,188,191,.24);border-radius:16px;padding:18px 18px 14px;
     font-size:11px;line-height:1.9;letter-spacing:.02em;
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  #diag-close{display:block;width:100%;margin-top:16px;
+    border:1px solid rgba(185,188,191,.3);background:transparent;border-radius:999px;
+    color:var(--stone-light);padding:12px;cursor:pointer;
+    font-family:"Archivo",sans-serif;font-size:10px;letter-spacing:.24em;text-transform:uppercase}
+  #diag-close:active{background:rgba(185,188,191,.14)}
   #diag b{font-weight:600;color:#fff;letter-spacing:.14em;
     text-transform:uppercase;font-size:9px;display:block;margin-bottom:6px}
   #diag .ok{color:#7FD1A6}
@@ -341,10 +351,9 @@ AFRAME.registerComponent('smoothed-anchor', {
   <div>
     <div id="topbar">
       <button class="chip" id="btn-home">Home</button>
-      <button class="chip" id="btn-diag">Status</button>
+      <button class="chip hidden" id="btn-diag">Status</button>
     </div>
     <div class="eyebrow hidden" id="brand" style="margin-top:14px"></div>
-    <div id="diag" class="hidden"></div>
   </div>
 
   <div id="lower">
@@ -402,6 +411,14 @@ AFRAME.registerComponent('smoothed-anchor', {
         </button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- Statusfenster: eigene Ebene, standardmäßig aus -->
+<div id="diag-layer" class="hidden">
+  <div>
+    <div id="diag"></div>
+    <button id="diag-close">Schließen</button>
   </div>
 </div>
 
@@ -679,7 +696,7 @@ AFRAME.registerComponent('smoothed-anchor', {
 
   function renderDiag() {
     const box = $('#diag');
-    if (box.classList.contains('hidden')) return;
+    if ($('#diag-layer').classList.contains('hidden')) return;
     const v = document.querySelector('body > video');
     const line = (label, value, good) =>
       label + ': <span class="' + (good ? 'ok' : 'bad') + '">' + value + '</span>';
@@ -698,9 +715,19 @@ AFRAME.registerComponent('smoothed-anchor', {
     ].join('<br>');
   }
 
-  $('#btn-diag').addEventListener('click', () => {
-    $('#diag').classList.toggle('hidden');
-    renderDiag();
+  // Die Statusanzeige ist ein Werkzeug zur Fehlersuche, nicht Teil der Karte.
+  // Sie erscheint nur, wenn ?diag an die Adresse gehängt wird.
+  if (/[?&]diag\b/.test(location.search)) $('#btn-diag').classList.remove('hidden');
+
+  function showDiag(on) {
+    $('#diag-layer').classList.toggle('hidden', !on);
+    if (on) renderDiag();
+  }
+  $('#btn-diag').addEventListener('click', () => showDiag(true));
+  $('#diag-close').addEventListener('click', () => showDiag(false));
+  // Tippen auf den abgedunkelten Bereich schließt ebenfalls
+  $('#diag-layer').addEventListener('click', e => {
+    if (e.target === $('#diag-layer')) showDiag(false);
   });
 
   // Zurück zur Startseite — lädt neu, damit die Kamera sauber neu startet
