@@ -105,6 +105,32 @@
 
   .hidden{display:none !important}
 
+  /* ---------- Kartenansicht ohne Kamera ---------- */
+  #ui.flat{justify-content:center}
+  #ui.flat #lower{display:flex;flex-direction:column;align-items:center}
+  #ui.flat #status{display:none}
+
+  #flat{pointer-events:auto;display:flex;flex-direction:column;align-items:center;
+        width:100%;max-width:430px;margin:0 auto 26px}
+  #flat-card{width:100%;border-radius:13px;display:block;
+    box-shadow:0 26px 64px rgba(0,0,0,.6),0 2px 0 rgba(255,255,255,.06)}
+  #flat-portrait{width:92px;height:92px;border-radius:50%;object-fit:cover;
+    border:2px solid var(--petrol);background:#fff;margin-top:-46px;position:relative;z-index:1}
+  .flat-name{font-family:"Bodoni Moda",serif;font-size:27px;color:#fff;
+    letter-spacing:.03em;margin-top:14px}
+  .flat-role{font-size:10px;letter-spacing:.28em;text-transform:uppercase;
+    color:var(--stone);margin-top:7px}
+  .flat-role sup{font-size:.68em;letter-spacing:.12em;vertical-align:super;margin-left:.12em}
+  .flat-claim{font-size:13px;line-height:1.7;color:var(--stone);margin:16px 0 0;max-width:30ch;
+    text-align:center}
+
+  /* Kontaktzeilen — hier tragen sie die Angaben, die sonst im Bildtrack stehen */
+  .flat-lines{display:flex;flex-direction:column;gap:9px;margin-top:18px;width:100%}
+  .line{display:block;text-align:center;pointer-events:auto;cursor:pointer;text-decoration:none;
+    background:rgba(14,76,96,.5);border:1px solid rgba(185,188,191,.26);border-radius:999px;
+    padding:12px 20px;font-size:13.5px;letter-spacing:.02em;color:#fff}
+  .line:active{border-color:#fff;background:rgba(14,76,96,.85)}
+
   /* Startkarte: erscheint vor Kamerastart und als Fallback ohne AR */
   #gate{position:fixed;inset:0;z-index:20;background:var(--ink);overflow:hidden;
     display:flex;flex-direction:column;align-items:center;justify-content:flex-end;
@@ -155,7 +181,8 @@ const CONFIG = {
   // Porträt: Datei neben index.html legen. Leer lassen = ohne Foto.
   // Empfehlung: quadratisch, ca. 600 × 600 px, unter 150 KB.
   photo      : "./foto.jpg",        // quadratisch — Kontaktdatei und AR-Panel
-  photoStart : "./foto-start.webp", // freigestellt — großes Bild auf der Startseite
+  photoStart : "./foto-start.webp",
+  cardImage  : "./target-source.png", // Kartenabbildung für die Ansicht ohne Kamera // freigestellt — großes Bild auf der Startseite
 
   // Pfad zur kompilierten Bildmarke (siehe ANLEITUNG.md, Schritt 1)
   targetSrc : "./target.mind"
@@ -230,7 +257,20 @@ const CONFIG = {
     <div id="diag" class="hidden"></div>
   </div>
 
-  <div>
+  <div id="lower">
+    <!-- Nur ohne Kamera: die Karte als eigenständige Ansicht -->
+    <div id="flat" class="hidden">
+      <img id="flat-card" alt="Visitenkarte">
+      <img id="flat-portrait" alt="">
+      <div class="flat-name"></div>
+      <div class="flat-role"></div>
+      <p class="flat-claim" id="flat-1"></p>
+      <div class="flat-lines hidden" id="flat-2">
+        <a class="line" data-act="call"  id="flat-phone"></a>
+        <a class="line" data-act="mail" id="flat-mail"></a>
+      </div>
+    </div>
+
     <div id="status">Karte ins Bild halten</div>
 
     <div id="dock" style="margin-top:16px">
@@ -311,6 +351,12 @@ const CONFIG = {
   $('#gate-claim').textContent   = CONFIG.claim;
   $('#identity .name').textContent = fullName;
   $('#identity .role').innerHTML   = roleHTML;
+  $('#flat-card').src        = CONFIG.cardImage || './target-source.png';
+  $('.flat-name').textContent = fullName;
+  $('.flat-role').innerHTML   = roleHTML;
+  $('#flat-1').textContent    = CONFIG.claim;
+  $('#flat-phone').textContent = CONFIG.phoneDisplay || CONFIG.phone;
+  $('#flat-mail').textContent  = CONFIG.email;
   $('#ar-role').setAttribute('value', rolePlain);
   $('#ar-claim').setAttribute('value', CONFIG.claim);
   $('#ar-phone').setAttribute('value', CONFIG.phoneDisplay || CONFIG.phone);
@@ -328,6 +374,7 @@ const CONFIG = {
     $('#gate-portrait').hidden = false;
     $('#dock-portrait').src = CONFIG.photo;
     $('#dock-portrait').hidden = false;
+    $('#flat-portrait').src = CONFIG.photo;
     $('#gate-portrait').addEventListener('error', e => e.target.hidden = true);
     $('#dock-portrait').addEventListener('error', e => e.target.hidden = true);
 
@@ -398,10 +445,14 @@ const CONFIG = {
   };
 
   // ---------- Szenenwechsel ----------
+  let flatMode = false;   // true = Kartenansicht ohne Kamera
+
   function setStep(n) {
     $('#dock-1').classList.toggle('hidden', n !== 1);
     $('#dock-2').classList.toggle('hidden', n !== 2);
-    $('#identity').classList.toggle('hidden', n !== 2);
+    $('#identity').classList.toggle('hidden', n !== 2 || flatMode);
+    $('#flat-1').classList.toggle('hidden', n !== 1);
+    $('#flat-2').classList.toggle('hidden', n !== 2);
     $('#ar-scene-1').setAttribute('visible', n === 1);
     $('#ar-scene-2').setAttribute('visible', n === 2);
   }
@@ -484,10 +535,13 @@ const CONFIG = {
   });
 
   $('#btn-skip').addEventListener('click', () => {
+    flatMode = true;
     $('#gate').classList.add('hidden');
     sceneEl.classList.add('hidden');
-    status.textContent = CONFIG.claim;
+    $('#ui').classList.add('flat');
+    $('#flat').classList.remove('hidden');
     dock.classList.add('on');
+    setStep(1);
   });
 
   preloadPhoto();
