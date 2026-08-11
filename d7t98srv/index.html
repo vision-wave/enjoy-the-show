@@ -210,6 +210,62 @@ const CONFIG = {
 };
 </script>
 
+<script>
+// Übernimmt die Lage von #target, geglättet auf Bildwiederholrate.
+// Totband gegen Restflimmern im Stillstand, kurze Zeitkonstante bei Bewegung.
+AFRAME.registerComponent('smoothed-anchor', {
+  schema: {
+    src:      { type: 'selector' },
+    tauRest:  { default: 0.10  },   // Sekunden — Glättung im Stillstand
+    tauMove:  { default: 0.002 },   // Sekunden — Glättung während Bewegung
+    dead:     { default: 0.0015 },  // Totband in Kartenbreiten
+    deadAng:  { default: 0.0025 },  // Totband für Drehung, Bogenmaß
+    speedRef: { default: 0.25  }
+  },
+  init() {
+    const T = THREE;
+    this.p = new T.Vector3(); this.q = new T.Quaternion(); this.s = new T.Vector3(1,1,1);
+    this.rp = new T.Vector3(); this.rq = new T.Quaternion(); this.rs = new T.Vector3(1,1,1);
+    this.pp = new T.Vector3();
+    this.started = false;
+    this.el.object3D.matrixAutoUpdate = false;
+  },
+  tick(time, delta) {
+    const src = this.data.src;
+    if (!src || !src.object3D) return;
+    const o = this.el.object3D, so = src.object3D;
+
+    if (!so.visible) { if (o.visible) { o.visible = false; this.started = false; } return; }
+
+    so.updateMatrixWorld(true);
+    so.matrixWorld.decompose(this.rp, this.rq, this.rs);
+
+    if (!this.started) {                       // erster Fund: ohne Übergang setzen
+      this.p.copy(this.rp); this.q.copy(this.rq); this.s.copy(this.rs);
+      this.pp.copy(this.rp); this.started = true; o.visible = true;
+    } else {
+      const dt = Math.min((delta || 16.7) / 1000, 0.1);
+      const moved = this.p.distanceTo(this.rp);
+      const ang   = this.q.angleTo(this.rq);
+
+      if (moved >= this.data.dead || ang >= this.data.deadAng) {
+        const speed = this.pp.distanceTo(this.rp) / dt;
+        this.pp.copy(this.rp);
+        const tau = this.data.tauMove +
+                    (this.data.tauRest - this.data.tauMove) * Math.exp(-speed / this.data.speedRef);
+        const a = 1 - Math.exp(-dt / tau);
+        this.p.lerp(this.rp, a);
+        this.q.slerp(this.rq, a);
+        this.s.lerp(this.rs, a);
+      }
+      o.visible = true;
+    }
+    o.matrix.compose(this.p, this.q, this.s);
+    o.matrixWorldNeedsUpdate = true;
+  }
+});
+</script>
+
 <!-- =========================================================
      2) AR-SZENE
      ========================================================= -->
@@ -226,11 +282,20 @@ const CONFIG = {
   <!-- Zielraum: die Karte ist 1 Einheit breit, 0.5715 hoch (3281:1875).
        Sie reicht also von x -0.5…+0.5 und y -0.286…+0.286.
        Das Panel dockt rechts an die Kartenkante an. -->
-  <a-entity id="target" mindar-image-target="targetIndex: 0">
+  <!-- #target empfängt die rohe Lage von MindAR und bleibt leer.
+       Der Inhalt hängt an #anchor, einer eigenen Ebene, die die Lage
+       geglättet übernimmt. So kann die Glättung nicht auf sich selbst
+       zurückwirken — sie liest immer den frischen Rohwert. -->
+  <a-entity id="target" mindar-image-target="targetIndex: 0"></a-entity>
+
+  <a-entity id="anchor" smoothed-anchor="src: #target" visible="false">
 
     <!-- Kartengrafik deckungsgleich über der echten Karte -->
-    <a-image src="./target-source.png" width="1" height="0.5715"
-             position="0 0 0.001" material="shader: flat"></a-image>
+    <!-- Weiche Außenkante: ein kleiner Lagefehler zeigt sich als sanfter
+         Übergang statt als doppelte Kante. -->
+    <a-image src="./card-overlay.webp" width="1" height="0.5715"
+             position="0 0 0.001"
+             material="shader: flat; transparent: true"></a-image>
 
     <!-- Panel sitzt unter der Karte: Karte 1 breit, Panel 1 breit und 0.42 hoch.
          Kartenunterkante liegt bei y -0.286, Panelmitte damit bei -0.496.
