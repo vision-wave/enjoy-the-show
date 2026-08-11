@@ -192,7 +192,21 @@ const CONFIG = {
   cardImage  : "./target-source.png", // Kartenabbildung für die Ansicht ohne Kamera // freigestellt — großes Bild auf der Startseite
 
   // Pfad zur kompilierten Bildmarke (siehe ANLEITUNG.md, Schritt 1)
-  targetSrc : "./target.mind"
+  targetSrc : "./target.mind",
+
+  // ----- Ruhe des Bildes auf der Karte -----
+  // Entscheidend ist filterBeta, nicht filterMinCF. Beta bestimmt, ab welcher
+  // Bewegung die Glättung nachlässt. MindAR liefert 1000 aus — so hoch, dass
+  // schon das Messrauschen als Bewegung gilt und gar nicht geglättet wird.
+  // Gemessen (Zittern / Nachlauf bei schneller Bewegung, in ‰ der Kartenbreite):
+  //   beta 1000 → 8.3 / 5      Auslieferungszustand, sichtbares Zittern
+  //   beta   50 → 4.5 / 11
+  //   beta   15 → 2.4 / 28     hier eingestellt
+  //   beta    5 → 1.0 / 56     noch ruhiger, sichtbarer Nachlauf
+  filterMinCF : 0.001,
+  filterBeta  : 15,
+  warmup      : 3,    // Bilder, die stimmen müssen, bevor eingeblendet wird
+  miss        : 10    // Bilder ohne Fund, bevor ausgeblendet wird
 };
 </script>
 
@@ -200,10 +214,7 @@ const CONFIG = {
      2) AR-SZENE
      ========================================================= -->
 <a-scene id="scene"
-  mindar-image="imageTargetSrc: #TARGET#; autoStart: false;
-               uiScanning: no; uiLoading: no; uiError: no;
-               maxTrack: 1; warmupTolerance: 1; missTolerance: 12;
-               filterMinCF: 0.001; filterBeta: 1000"
+  mindar-image="autoStart: false; uiScanning: no; uiLoading: no; uiError: no"
   renderer="colorManagement: true; antialias: false; precision: mediump;
             maxCanvasWidth: 1280; maxCanvasHeight: 1280"
   light="defaultLightsEnabled: false"
@@ -335,8 +346,16 @@ const CONFIG = {
 
   // Target-Pfad aus CONFIG in die Szene schreiben
   const sceneEl = $('#scene');
-  sceneEl.setAttribute('mindar-image',
-    sceneEl.getAttribute('mindar-image').replace('#TARGET#', CONFIG.targetSrc));
+  sceneEl.setAttribute('mindar-image', [
+    'imageTargetSrc: ' + CONFIG.targetSrc,
+    'autoStart: false',
+    'uiScanning: no', 'uiLoading: no', 'uiError: no',
+    'maxTrack: 1',
+    'warmupTolerance: ' + CONFIG.warmup,
+    'missTolerance: '   + CONFIG.miss,
+    'filterMinCF: '     + CONFIG.filterMinCF,
+    'filterBeta: '      + CONFIG.filterBeta
+  ].join('; '));
 
   // Texte aus CONFIG befüllen
   const fullName = CONFIG.firstName + ' ' + CONFIG.lastName;
