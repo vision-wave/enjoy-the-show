@@ -68,14 +68,6 @@
   #dock-portrait{width:56px;height:56px;margin:0 auto 10px}
   .portrait[hidden]{display:none}
   #identity .role{font-size:10px;letter-spacing:.28em;text-transform:uppercase;color:var(--stone);margin-top:6px}
-  /* Direkt antippbare Kontaktzeilen */
-  .contact-lines{display:flex;flex-direction:column;gap:8px;margin-top:14px}
-  .line{display:block;pointer-events:auto;cursor:pointer;text-decoration:none;
-    background:rgba(9,53,69,.72);backdrop-filter:blur(14px);
-    border:1px solid rgba(185,188,191,.24);border-radius:999px;
-    padding:11px 20px;font-size:13px;letter-spacing:.03em;color:#fff}
-  .line:active{border-color:#fff;background:rgba(14,76,96,.9)}
-
   #identity .role sup{font-size:.68em;letter-spacing:.12em;vertical-align:super;margin-left:.12em}
 
   .row{display:flex;gap:22px;justify-content:center;flex-wrap:wrap}
@@ -163,7 +155,7 @@ const CONFIG = {
   // Porträt: Datei neben index.html legen. Leer lassen = ohne Foto.
   // Empfehlung: quadratisch, ca. 600 × 600 px, unter 150 KB.
   photo      : "./foto.jpg",        // quadratisch — Kontaktdatei und AR-Panel
-  photoStart : "./foto-start.png",  // freigestellt — großes Bild auf der Startseite
+  photoStart : "./foto-start.webp", // freigestellt — großes Bild auf der Startseite
 
   // Pfad zur kompilierten Bildmarke (siehe ANLEITUNG.md, Schritt 1)
   targetSrc : "./target.mind"
@@ -213,13 +205,13 @@ const CONFIG = {
                color="#FFFFFF"></a-plane>
       <a-text value="KONTAKT" align="center" width="0.26"
               wrap-count="14" color="#0E4C60" position="0.69 0.20 0.004"></a-text>
-      <a-text id="ar-phone" value="" align="center" width="0.36"
-              wrap-count="22" color="#0B0B0C" position="0.69 0.06 0.004"></a-text>
-      <a-text id="ar-mail" value="" align="center" width="0.34"
-              wrap-count="30" color="#0E4C60" position="0.69 -0.04 0.004"></a-text>
+      <a-text id="ar-phone" value="" align="center" width="0.38"
+              wrap-count="19" color="#0B0B0C" position="0.69 0.07 0.004"></a-text>
+      <a-text id="ar-mail" value="" align="center" width="0.36"
+              wrap-count="26" color="#0E4C60" position="0.69 -0.04 0.004"></a-text>
       <a-text value="Unten tippen zum Anrufen&#10;oder Speichern" align="center"
               width="0.28" wrap-count="34" color="#8B9AA1"
-              position="0.69 -0.17 0.004"></a-text>
+              position="0.69 -0.18 0.004"></a-text>
     </a-entity>
 
   </a-entity>
@@ -246,10 +238,6 @@ const CONFIG = {
         <img id="dock-portrait" class="portrait" alt="" hidden>
         <div class="name"></div>
         <div class="role"></div>
-        <div class="contact-lines">
-          <a class="line" id="line-phone" data-act="call"></a>
-          <a class="line" id="line-mail"  data-act="mail"></a>
-        </div>
       </div>
 
       <!-- Szene 1 -->
@@ -323,8 +311,6 @@ const CONFIG = {
   $('#gate-claim').textContent   = CONFIG.claim;
   $('#identity .name').textContent = fullName;
   $('#identity .role').innerHTML   = roleHTML;
-  $('#line-phone').textContent = CONFIG.phoneDisplay || CONFIG.phone;
-  $('#line-mail').textContent  = CONFIG.email;
   $('#ar-role').setAttribute('value', rolePlain);
   $('#ar-claim').setAttribute('value', CONFIG.claim);
   $('#ar-phone').setAttribute('value', CONFIG.phoneDisplay || CONFIG.phone);
