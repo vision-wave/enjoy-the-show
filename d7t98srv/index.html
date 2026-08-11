@@ -105,6 +105,13 @@
 
   .hidden{display:none !important}
 
+  /* Knöpfe, die den Zeilen im Bildtrack folgen */
+  .ar-tap{position:fixed;display:none;z-index:6;padding:0;
+    border:0;border-radius:12px;background:transparent;cursor:pointer;
+    -webkit-appearance:none;transition:background .12s ease}
+  .ar-tap.on{display:block}
+  .ar-tap:active{background:rgba(14,76,96,.22)}
+
   /* ---------- Kartenansicht ohne Kamera ---------- */
   #ui.flat{justify-content:center}
   #ui.flat #lower{display:flex;flex-direction:column;align-items:center}
@@ -203,9 +210,7 @@ const CONFIG = {
   vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false"
   embedded>
 
-  <a-camera position="0 0 0" look-controls="enabled: false"
-            cursor="fuse: false; rayOrigin: mouse"
-            raycaster="objects: .ar-hit; far: 100"></a-camera>
+  <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
   <!-- Zielraum: die Karte ist 1 Einheit breit, 0.5715 hoch (3281:1875).
        Sie reicht also von x -0.5…+0.5 und y -0.286…+0.286.
@@ -231,10 +236,10 @@ const CONFIG = {
       <!-- Unsichtbare Trefferflächen, deckungsgleich mit den Textzeilen im Panel.
            Sie leuchten beim Antippen kurz auf, damit der Treffer sichtbar wird. -->
       <a-plane class="ar-hit" data-act="call"
-               width="0.46" height="0.075" position="0 -0.4634 0.004"
+               width="0.52" height="0.115" position="0 -0.4492 0.004"
                material="shader: flat; color: #0E4C60; transparent: true; opacity: 0"></a-plane>
       <a-plane class="ar-hit" data-act="mail"
-               width="0.38" height="0.060" position="0 -0.5492 0.004"
+               width="0.46" height="0.110" position="0 -0.5754 0.004"
                material="shader: flat; color: #0E4C60; transparent: true; opacity: 0"></a-plane>
     </a-entity>
 
@@ -435,8 +440,10 @@ const CONFIG = {
 
   // ---------- Szenenwechsel ----------
   let flatMode = false;   // true = Kartenansicht ohne Kamera
+  let currentStep = 1;    // 1 = Übersicht, 2 = Kontakt
 
   function setStep(n) {
+    currentStep = n;
     $('#dock-1').classList.toggle('hidden', n !== 1);
     $('#dock-2').classList.toggle('hidden', n !== 2);
     $('#identity').classList.toggle('hidden', n !== 2 || flatMode);
@@ -454,13 +461,86 @@ const CONFIG = {
   }
   $$('[data-act]').forEach(bind);
 
-  // Trefferflächen im Bildtrack: erst Rückmeldung, dann Aktion
-  $$('.ar-hit').forEach(el => {
-    el.addEventListener('click', () => {
-      el.setAttribute('material', 'opacity', 0.22);
-      setTimeout(() => el.setAttribute('material', 'opacity', 0), 260);
+  // ---------- Antippbare Zeilen im Bildtrack ----------
+  // Statt einen Strahl durch die Szene zu schicken, rechne ich die vier Ecken
+  // jeder Fläche in Bildschirmkoordinaten um und lege dort einen echten Knopf
+  // hin. Der reagiert auf Berührung so zuverlässig wie jedes andere Bedienelement.
+  const taps = $$('.ar-hit').map(plane => {
+    const w = parseFloat(plane.getAttribute('width'))  || 0.4;
+    const h = parseFloat(plane.getAttribute('height')) || 0.07;
+    const btn = document.createElement('button');
+    btn.className = 'ar-tap';
+    btn.setAttribute('aria-label',
+      plane.dataset.act === 'call' ? 'Anrufen' : 'E-Mail schreiben');
+    btn.addEventListener('click', e => {
+      e.preventDefault();
+      plane.setAttribute('material', 'opacity', 0.22);
+      setTimeout(() => plane.setAttribute('material', 'opacity', 0), 260);
+      actions[plane.dataset.act]();
     });
+    document.body.appendChild(btn);
+    return { plane, btn, w, h };
   });
+
+  const _v = new THREE.Vector3();
+
+  function followTaps() {
+    requestAnimationFrame(followTaps);
+    const cam = sceneEl.camera;
+    const live = cam && !flatMode && currentStep === 2 && state.target === 'erkannt';
+    if (!live) { taps.forEach(t => t.btn.classList.remove('on')); return; }
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const rects = [];
+    taps.forEach(({ plane, btn, w, h }) => {
+      const o = plane.object3D;
+      if (!o) return;
+      const hw = w / 2, hh = h / 2;
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9, behind = false;
+
+      [[-hw,-hh],[hw,-hh],[hw,hh],[-hw,hh]].forEach(([x, y]) => {
+        _v.set(x, y, 0);
+        o.localToWorld(_v);
+        _v.project(cam);
+        if (_v.z > 1) behind = true;
+        const sx = (_v.x * 0.5 + 0.5) * W, sy = (-_v.y * 0.5 + 0.5) * H;
+        x0 = Math.min(x0, sx); x1 = Math.max(x1, sx);
+        y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
+      });
+
+      if (behind || x1 < 0 || y1 < 0 || x0 > W || y0 > H) {
+        btn.classList.remove('on'); return;
+      }
+      rects.push({ btn, x0, y0, x1, y1 });
+    });
+
+    // Berührungsziele unter 44 px sind zu klein für einen Daumen. Zu kleine
+    // Felder wachsen symmetrisch — und wenn sie sich dabei überschneiden,
+    // wird die Grenze in die Mitte zwischen beide Felder gelegt.
+    const MIN = 44;
+    rects.forEach(r => {
+      const gy = MIN - (r.y1 - r.y0);
+      if (gy > 0) { r.y0 -= gy / 2; r.y1 += gy / 2; }
+      const gx = MIN - (r.x1 - r.x0);
+      if (gx > 0) { r.x0 -= gx / 2; r.x1 += gx / 2; }
+    });
+    rects.sort((a, b) => a.y0 - b.y0);
+    for (let i = 1; i < rects.length; i++) {
+      const a = rects[i - 1], b = rects[i];
+      if (a.y1 > b.y0) { const m = (a.y1 + b.y0) / 2; a.y1 = m; b.y0 = m; }
+    }
+
+    rects.forEach(({ btn, x0, y0, x1, y1 }) => {
+      // Unter 30 px ist ein Treffer Glückssache — dann übernehmen die Ringe unten
+      if (y1 - y0 < 30 || x1 - x0 < 30) { btn.classList.remove('on'); return; }
+      btn.classList.add('on');
+      btn.style.left   = x0 + 'px';
+      btn.style.top    = y0 + 'px';
+      btn.style.width  = (x1 - x0) + 'px';
+      btn.style.height = (y1 - y0) + 'px';
+    });
+  }
+  requestAnimationFrame(followTaps);
 
   // ---------- Trackingstatus ----------
   const dock = $('#dock'), status = $('#status');
@@ -507,7 +587,9 @@ const CONFIG = {
       line('Foto', photoB64 ? Math.round(photoB64.length / 1365) + ' KB'
                             : (CONFIG.photo ? 'nicht gefunden' : 'nicht konfiguriert'),
            !!photoB64),
-      line('Grafiken', document.querySelectorAll('a-image').length + ' geladen', true)
+      line('Grafiken', document.querySelectorAll('a-image').length + ' geladen', true),
+      line('Tippfelder', document.querySelectorAll('.ar-tap.on').length + ' aktiv',
+           document.querySelectorAll('.ar-tap.on').length > 0)
     ].join('<br>');
   }
 
