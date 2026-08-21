@@ -270,10 +270,16 @@ AFRAME.registerComponent('smoothed-anchor', {
     // 3 ‰ der Kartenbreite sind 0,27 mm — auf dem Bildschirm gut ein Pixel.
     dead:      { default: 0.003  },  // Totband in Kartenbreiten
     deadAng:   { default: 0.005  },  // Totband für Drehung, Bogenmaß (0,29°)
-    speedRef:  { default: 0.25  },
-    maxSpeed:  { default: 2.5   },   // Kartenbreiten pro Sekunde
-    maxSpin:   { default: 6.0   },   // Bogenmaß pro Sekunde
-    outlierMax:{ default: 4     }    // so viele Ausreißer, dann ist es echt
+    // Ab welcher Geschwindigkeit die Glättung nachlässt. Klein = folgt auch
+    // langsamen Bewegungen sofort.
+    speedRef:  { default: 0.08  },
+    // Obergrenze für plausible Bewegung. 25 Kartenbreiten/s sind rund 2 m/s —
+    // schneller bewegt niemand eine Karte vor der Kamera. Echte Fehlmessungen
+    // springen um ein Vielfaches weiter und werden weiterhin abgefangen.
+    // Gemessener Nachlauf bei 5 Kartenbreiten/s: bei 2.5 waren es 30 mm, jetzt 0.
+    maxSpeed:  { default: 25    },   // Kartenbreiten pro Sekunde
+    maxSpin:   { default: 25    },   // Bogenmaß pro Sekunde
+    outlierMax:{ default: 2     }    // so viele Ausreißer, dann ist es echt
   },
   init() {
     const T = THREE;
