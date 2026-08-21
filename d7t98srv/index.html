@@ -262,12 +262,18 @@ const CONFIG = {
 // Totband gegen Restflimmern im Stillstand, kurze Zeitkonstante bei Bewegung.
 AFRAME.registerComponent('smoothed-anchor', {
   schema: {
-    src:      { type: 'selector' },
-    tauRest:  { default: 0.10  },   // Sekunden — Glättung im Stillstand
-    tauMove:  { default: 0.002 },   // Sekunden — Glättung während Bewegung
-    dead:     { default: 0.0015 },  // Totband in Kartenbreiten
-    deadAng:  { default: 0.0025 },  // Totband für Drehung, Bogenmaß
-    speedRef: { default: 0.25  }
+    src:       { type: 'selector' },
+    src2:      { type: 'selector' },   // zweite Bildmarke, optional
+    tauRest:   { default: 0.10  },   // Sekunden — Glättung im Stillstand
+    tauMove:   { default: 0.002 },   // Sekunden — Glättung während Bewegung
+    // Totband: Messrauschen unterhalb dieser Schwelle wird ignoriert.
+    // 3 ‰ der Kartenbreite sind 0,27 mm — auf dem Bildschirm gut ein Pixel.
+    dead:      { default: 0.003  },  // Totband in Kartenbreiten
+    deadAng:   { default: 0.005  },  // Totband für Drehung, Bogenmaß (0,29°)
+    speedRef:  { default: 0.25  },
+    maxSpeed:  { default: 2.5   },   // Kartenbreiten pro Sekunde
+    maxSpin:   { default: 6.0   },   // Bogenmaß pro Sekunde
+    outlierMax:{ default: 4     }    // so viele Ausreißer, dann ist es echt
   },
   init() {
     const T = THREE;
@@ -275,14 +281,28 @@ AFRAME.registerComponent('smoothed-anchor', {
     this.rp = new T.Vector3(); this.rq = new T.Quaternion(); this.rs = new T.Vector3(1,1,1);
     this.pp = new T.Vector3();
     this.started = false;
+    this.outliers = 0;
+    this.activeSrc = null;
     this.el.object3D.matrixAutoUpdate = false;
   },
   tick(time, delta) {
-    const src = this.data.src;
-    if (!src || !src.object3D) return;
-    const o = this.el.object3D, so = src.object3D;
+    // Die gerade erkannte Marke gewinnt. Wechselt sie, wird neu eingerastet,
+    // damit die Grafik nicht von der einen zur anderen Lage hinübergleitet.
+    const a = this.data.src, b = this.data.src2;
+    let src = null;
+    if (a && a.object3D && a.object3D.visible) src = a;
+    else if (b && b.object3D && b.object3D.visible) src = b;
 
-    if (!so.visible) { if (o.visible) { o.visible = false; this.started = false; } return; }
+    const o = this.el.object3D;
+
+    if (!src) {
+      if (o.visible) { o.visible = false; this.started = false; this.outliers = 0; }
+      this.activeSrc = null;
+      return;
+    }
+    if (src !== this.activeSrc) { this.activeSrc = src; this.started = false; this.outliers = 0; }
+
+    const so = src.object3D;
 
     so.updateMatrixWorld(true);
     so.matrixWorld.decompose(this.rp, this.rq, this.rs);
@@ -294,6 +314,21 @@ AFRAME.registerComponent('smoothed-anchor', {
       const dt = Math.min((delta || 16.7) / 1000, 0.1);
       const moved = this.p.distanceTo(this.rp);
       const ang   = this.q.angleTo(this.rq);
+
+      // Sprungunterdrückung: Ist die Marke merkmalsarm, liefert die Erkennung
+      // gelegentlich eine völlig andere Lage — ein Bild lang. Solche Ausreißer
+      // werden verworfen. Kommen mehrere hintereinander, ist es eine echte
+      // Bewegung und wird übernommen.
+      const zuSchnell = moved / dt > this.data.maxSpeed ||
+                        ang   / dt > this.data.maxSpin;
+      if (zuSchnell && this.outliers < this.data.outlierMax) {
+        this.outliers++;
+        o.matrix.compose(this.p, this.q, this.s);
+        o.matrixWorldNeedsUpdate = true;
+        o.visible = true;
+        return;
+      }
+      this.outliers = 0;
 
       if (moved >= this.data.dead || ang >= this.data.deadAng) {
         const speed = this.pp.distanceTo(this.rp) / dt;
@@ -343,9 +378,13 @@ AFRAME.registerComponent('smoothed-anchor', {
        Der Inhalt hängt an #anchor, einer eigenen Ebene, die die Lage
        geglättet übernimmt. So kann die Glättung nicht auf sich selbst
        zurückwirken — sie liest immer den frischen Rohwert. -->
-  <a-entity id="target" mindar-image-target="targetIndex: 0"></a-entity>
+  <!-- Zwei Bildmarken: Index 0 und 1 in der kompilierten target.mind.
+       Beide bleiben leer und liefern nur die Rohlage. Welche gerade erkannt
+       ist, entscheidet die Glättung unten — es zählt immer die sichtbare. -->
+  <a-entity id="target"  mindar-image-target="targetIndex: 0"></a-entity>
+  <a-entity id="target2" mindar-image-target="targetIndex: 1"></a-entity>
 
-  <a-entity id="anchor" smoothed-anchor="src: #target" visible="false">
+  <a-entity id="anchor" smoothed-anchor="src: #target; src2: #target2" visible="false">
 
    <!-- Alles Sichtbare hängt an dieser Gruppe. Der Feinabgleich skaliert und
         verschiebt nur sie — Kartengrafik, Panel und Trefferflächen bewegen
@@ -507,7 +546,7 @@ AFRAME.registerComponent('smoothed-anchor', {
     'imageTargetSrc: ' + CONFIG.targetSrc,
     'autoStart: false',
     'uiScanning: no', 'uiLoading: no', 'uiError: no',
-    'maxTrack: 1',
+    'maxTrack: 1',   // eine Marke gleichzeitig genügt, beide werden gesucht
     'warmupTolerance: ' + CONFIG.warmup,
     'missTolerance: '   + CONFIG.miss,
     'filterMinCF: '     + CONFIG.filterMinCF,
@@ -757,20 +796,29 @@ AFRAME.registerComponent('smoothed-anchor', {
   // Kurze Aussetzer nicht sofort quittieren — sonst flackert die Bedienung weg
   let lostTimer = null;
 
-  $('#target').addEventListener('targetFound', () => {
-    clearTimeout(lostTimer);
-    dock.classList.add('on');
-    status.classList.add('hide');
-    state.target = 'erkannt'; renderDiag();
-  });
-  $('#target').addEventListener('targetLost', () => {
-    state.target = 'verloren'; renderDiag();
-    clearTimeout(lostTimer);
-    lostTimer = setTimeout(() => {
-      dock.classList.remove('on');
-      status.textContent = 'Karte ins Bild halten';
-      status.classList.remove('hide');
-    }, 1800);
+  // Beide Marken melden denselben Zustand — erkannt ist erkannt.
+  let gefunden = 0;
+  ['#target', '#target2'].forEach(sel => {
+    const el = $(sel);
+    if (!el) return;
+    el.addEventListener('targetFound', () => {
+      gefunden++;
+      clearTimeout(lostTimer);
+      dock.classList.add('on');
+      status.classList.add('hide');
+      state.target = 'erkannt'; renderDiag();
+    });
+    el.addEventListener('targetLost', () => {
+      gefunden = Math.max(0, gefunden - 1);
+      if (gefunden > 0) return;           // die andere Seite ist noch im Bild
+      state.target = 'verloren'; renderDiag();
+      clearTimeout(lostTimer);
+      lostTimer = setTimeout(() => {
+        dock.classList.remove('on');
+        status.textContent = 'Karte ins Bild halten';
+        status.classList.remove('hide');
+      }, 1800);
+    });
   });
 
   // ---------- Statusanzeige ----------
@@ -794,6 +842,7 @@ AFRAME.registerComponent('smoothed-anchor', {
       line('Kamerabild', v ? (v.videoWidth ? v.videoWidth + '×' + v.videoHeight : 'kein Signal')
                           : 'kein Video-Element', !!(v && v.videoWidth)),
       line('Tracking', state.target, state.target === 'erkannt'),
+      line('Marken', document.querySelectorAll('[mindar-image-target]').length + ' angelegt', true),
       line('Foto', photoB64 ? Math.round(photoB64.length / 1365) + ' KB'
                             : (CONFIG.photo ? 'nicht gefunden' : 'nicht konfiguriert'),
            !!photoB64),
