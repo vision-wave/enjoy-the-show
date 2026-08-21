@@ -70,10 +70,10 @@
   #identity .role{font-size:10px;letter-spacing:.28em;text-transform:uppercase;color:var(--stone);margin-top:6px}
   #identity .role sup{font-size:.68em;letter-spacing:.12em;vertical-align:super;margin-left:.12em}
 
-  .row{display:flex;gap:22px;justify-content:center;flex-wrap:wrap}
+  .row{display:flex;gap:16px;justify-content:center;flex-wrap:wrap}
 
   /* Kopfleiste: immer erreichbar, auch wenn die Karte nicht erkannt wird */
-  #topbar{display:flex;align-items:center;justify-content:space-between;
+  #topbar{display:flex;align-items:center;justify-content:flex-end;
     margin-top:22px;pointer-events:auto}
   .chip{border:1px solid rgba(185,188,191,.28);background:rgba(9,53,69,.66);
     backdrop-filter:blur(14px);border-radius:999px;color:var(--stone-light);
@@ -85,13 +85,27 @@
   /* Eigene Ebene über allem. Vorher hing das Fenster im Seitenfluss und
      verschob beim Öffnen die Kopfleiste — der Schließen-Tipp ging dann daneben. */
   #diag-layer{position:fixed;inset:0;z-index:30;pointer-events:auto;
-    background:rgba(6,20,26,.72);backdrop-filter:blur(6px);
-    display:flex;align-items:center;justify-content:center;padding:24px}
+    background:rgba(6,20,26,.55);
+    display:flex;align-items:flex-end;justify-content:center;
+    padding:24px 20px calc(28px + env(safe-area-inset-bottom));overflow-y:auto}
   #diag{width:100%;max-width:340px;
     background:rgba(9,53,69,.96);
     border:1px solid rgba(185,188,191,.24);border-radius:16px;padding:18px 18px 14px;
     font-size:11px;line-height:1.9;letter-spacing:.02em;
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  #fit{margin-top:12px;background:rgba(9,53,69,.96);
+    border:1px solid rgba(185,188,191,.24);border-radius:16px;padding:16px 18px;
+    font-family:"Archivo",sans-serif;font-size:11px;color:var(--stone-light)}
+  #fit b{display:block;font-size:9px;letter-spacing:.16em;text-transform:uppercase;
+    color:#fff;margin-bottom:10px}
+  #fit label{display:flex;align-items:center;gap:10px;margin-bottom:8px;font-size:10.5px}
+  #fit input{flex:1;accent-color:#7FB2C4}
+  #fit output{min-width:52px;text-align:right;
+    font-family:ui-monospace,Menlo,monospace;font-size:10px;color:#9FC0CC}
+  #fit code{display:block;margin-top:10px;padding:8px 10px;border-radius:8px;
+    background:rgba(0,0,0,.3);font-size:9.5px;line-height:1.7;color:#9FC0CC;
+    font-family:ui-monospace,Menlo,monospace;white-space:pre}
+
   #diag-close{display:block;width:100%;margin-top:16px;
     border:1px solid rgba(185,188,191,.3);background:transparent;border-radius:999px;
     color:var(--stone-light);padding:12px;cursor:pointer;
@@ -102,7 +116,7 @@
   #diag .ok{color:#7FD1A6}
   #diag .bad{color:#F0857D}
 
-  .ring{width:78px;height:78px;border-radius:50%;border:1px solid var(--ring);
+  .ring{width:74px;height:74px;border-radius:50%;border:1px solid var(--ring);
     background:radial-gradient(120% 120% at 30% 20%,rgba(14,76,96,.92),rgba(9,53,69,.98));
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;
     color:var(--stone-light);cursor:pointer;
@@ -222,8 +236,16 @@ const CONFIG = {
   //   beta    5 → 1.0 / 56     noch ruhiger, sichtbarer Nachlauf
   filterMinCF : 0.001,
   filterBeta  : 15,
-  warmup      : 3,    // Bilder, die stimmen müssen, bevor eingeblendet wird
-  miss        : 10    // Bilder ohne Fund, bevor ausgeblendet wird
+  warmup      : 1,    // Bilder, die stimmen müssen, bevor eingeblendet wird
+  miss        : 12,   // Bilder ohne Fund, bevor ausgeblendet wird
+
+  // ----- Deckung des Overlays auf der Karte -----
+  // 1.0 = so groß wie die kompilierte Bildmarke. Deckt das Overlay die Karte
+  // nicht ganz, Wert erhöhen; ragt es über, verringern.
+  // Mit ?diag in der Adresse erscheint ein Regler zum Justieren.
+  cardScale : 1.0,
+  cardShiftX: 0.0,    // seitlich verschieben, in Kartenbreiten
+  cardShiftY: 0.0
 };
 </script>
 
@@ -294,6 +316,16 @@ AFRAME.registerComponent('smoothed-anchor', {
   vr-mode-ui="enabled: false" device-orientation-permission-ui="enabled: false"
   embedded>
 
+  <!-- Alle Texturen vorab laden. Ohne das wird die zweite Grafik erst beim
+       Umschalten dekodiert und auf die Grafikeinheit geschoben — das ist der
+       Ruckler beim Ebenenwechsel. -->
+  <a-assets timeout="8000">
+    <img id="tex-ov1"   src="./overlay-1.webp">
+    <img id="tex-ov2"   src="./overlay-2.webp">
+    <img id="tex-pan1"  src="./panel-1.jpg">
+    <img id="tex-pan2"  src="./panel-2.jpg">
+  </a-assets>
+
   <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
 
   <!-- Zielraum: die Karte ist 1 Einheit breit, 0.5715 hoch (3281:1875).
@@ -312,10 +344,10 @@ AFRAME.registerComponent('smoothed-anchor', {
          immer nur eine — sie wechselt mit der Ebene, die Karte "dreht sich um".
          Weiche Außenkante: ein kleiner Lagefehler zeigt sich als sanfter
          Übergang statt als doppelte Kante. -->
-    <a-image id="ar-card-1" src="./overlay-1.webp" width="1" height="0.5715"
+    <a-image id="ar-card-1" src="#tex-ov1" width="1" height="0.5715"
              position="0 0 0.001"
              material="shader: flat; transparent: true"></a-image>
-    <a-image id="ar-card-2" src="./overlay-2.webp" width="1" height="0.5715"
+    <a-image id="ar-card-2" src="#tex-ov2" width="1" height="0.5715"
              position="0 0 0.0011" visible="false"
              material="shader: flat; transparent: true"></a-image>
 
@@ -323,12 +355,12 @@ AFRAME.registerComponent('smoothed-anchor', {
          Kartenunterkante liegt bei y -0.286, Panelmitte damit bei -0.496.
          Porträt und Text sind ins Bild gebacken — ein Zeichenaufruf pro Szene. -->
     <a-entity id="ar-scene-1">
-      <a-image src="./panel-1.jpg" width="1" height="0.42"
+      <a-image src="#tex-pan1" width="1" height="0.42"
                position="0 -0.496 0.002" material="shader: flat"></a-image>
     </a-entity>
 
     <a-entity id="ar-scene-2" visible="false">
-      <a-image src="./panel-2.jpg" width="1" height="0.42"
+      <a-image src="#tex-pan2" width="1" height="0.42"
                position="0 -0.496 0.002" material="shader: flat"></a-image>
 
       <!-- Unsichtbare Trefferflächen, deckungsgleich mit den Textzeilen im Panel.
@@ -350,7 +382,6 @@ AFRAME.registerComponent('smoothed-anchor', {
 <div id="ui">
   <div>
     <div id="topbar">
-      <button class="chip" id="btn-home">Home</button>
       <button class="chip hidden" id="btn-diag">Status</button>
     </div>
     <div class="eyebrow hidden" id="brand" style="margin-top:14px"></div>
@@ -393,6 +424,10 @@ AFRAME.registerComponent('smoothed-anchor', {
           <svg viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2.5"/><circle cx="8.5" cy="11" r="2"/><path d="M5 16c.8-1.6 2-2.4 3.5-2.4S11.2 14.4 12 16M15 10h4M15 13.5h4"/></svg>
           <span>Karte</span>
         </button>
+        <button class="ring" id="btn-home" aria-label="Zurück zum Start">
+          <svg viewBox="0 0 24 24"><path d="M3.5 10.5 12 3.5l8.5 7M6 9.5V20h12V9.5"/><path d="M10 20v-5.5h4V20"/></svg>
+          <span>Home</span>
+        </button>
       </div>
 
       <!-- Szene 2 -->
@@ -405,9 +440,13 @@ AFRAME.registerComponent('smoothed-anchor', {
           <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19c1.3-3.2 3.7-4.8 6.5-4.8s5.2 1.6 6.5 4.8"/></svg>
           <span>Speichern</span>
         </button>
-        <button class="ring" id="btn-back" data-act="back" aria-label="Zurück zum Hauptmenü">
+        <button class="ring" id="btn-back" data-act="back" aria-label="Eine Ebene zurück">
           <svg viewBox="0 0 24 24"><path d="M10 5.5 3.5 12 10 18.5M3.5 12H17a3.5 3.5 0 013.5 3.5V19"/></svg>
           <span>Zurück</span>
+        </button>
+        <button class="ring" id="btn-home-2" aria-label="Zurück zum Start">
+          <svg viewBox="0 0 24 24"><path d="M3.5 10.5 12 3.5l8.5 7M6 9.5V20h12V9.5"/><path d="M10 20v-5.5h4V20"/></svg>
+          <span>Home</span>
         </button>
       </div>
     </div>
@@ -418,6 +457,17 @@ AFRAME.registerComponent('smoothed-anchor', {
 <div id="diag-layer" class="hidden">
   <div>
     <div id="diag"></div>
+
+    <!-- Feinabgleich: Overlay live auf die Karte einpassen. Der abgelesene
+         Wert wird oben in die CONFIG übertragen, dann ist es dauerhaft. -->
+    <div id="fit">
+      <b>Overlay einpassen</b>
+      <label>Größe <input type="range" id="fit-s" min="0.80" max="1.30" step="0.005"><output id="fit-so"></output></label>
+      <label>Links/rechts <input type="range" id="fit-x" min="-0.15" max="0.15" step="0.002"><output id="fit-xo"></output></label>
+      <label>Hoch/runter <input type="range" id="fit-y" min="-0.15" max="0.15" step="0.002"><output id="fit-yo"></output></label>
+      <code id="fit-code"></code>
+    </div>
+
     <button id="diag-close">Schließen</button>
   </div>
 </div>
@@ -470,6 +520,19 @@ AFRAME.registerComponent('smoothed-anchor', {
   $('#gate-claim').textContent   = CONFIG.claim;
   $('#identity .name').textContent = fullName;
   $('#identity .role').innerHTML   = roleHTML;
+  // ---------- Deckung des Overlays ----------
+  function applyCardFit(scale, dx, dy) {
+    const w = 1 * scale, h = 0.5715 * scale;
+    ['#ar-card-1', '#ar-card-2'].forEach(sel => {
+      const el = $(sel);
+      el.setAttribute('width', w);
+      el.setAttribute('height', h);
+      const z = sel === '#ar-card-2' ? 0.0011 : 0.001;
+      el.setAttribute('position', dx + ' ' + dy + ' ' + z);
+    });
+  }
+  applyCardFit(CONFIG.cardScale, CONFIG.cardShiftX, CONFIG.cardShiftY);
+
   $('#flat-card').src        = CONFIG.cardFlat1;
   $('.flat-name').textContent = fullName;
   $('.flat-role').innerHTML   = roleHTML;
@@ -723,6 +786,26 @@ AFRAME.registerComponent('smoothed-anchor', {
     $('#diag-layer').classList.toggle('hidden', !on);
     if (on) renderDiag();
   }
+  // Regler mit den aktuellen Werten füllen und live anwenden
+  const fitS = $('#fit-s'), fitX = $('#fit-x'), fitY = $('#fit-y');
+  fitS.value = CONFIG.cardScale;
+  fitX.value = CONFIG.cardShiftX;
+  fitY.value = CONFIG.cardShiftY;
+
+  function updateFit() {
+    const sc = parseFloat(fitS.value), dx = parseFloat(fitX.value), dy = parseFloat(fitY.value);
+    applyCardFit(sc, dx, dy);
+    $('#fit-so').textContent = sc.toFixed(3);
+    $('#fit-xo').textContent = dx.toFixed(3);
+    $('#fit-yo').textContent = dy.toFixed(3);
+    $('#fit-code').textContent =
+      'cardScale : ' + sc.toFixed(3) + ',\n' +
+      'cardShiftX: ' + dx.toFixed(3) + ',\n' +
+      'cardShiftY: ' + dy.toFixed(3);
+  }
+  [fitS, fitX, fitY].forEach(r => r.addEventListener('input', updateFit));
+  updateFit();
+
   $('#btn-diag').addEventListener('click', () => showDiag(true));
   $('#diag-close').addEventListener('click', () => showDiag(false));
   // Tippen auf den abgedunkelten Bereich schließt ebenfalls
@@ -731,7 +814,10 @@ AFRAME.registerComponent('smoothed-anchor', {
   });
 
   // Zurück zur Startseite — lädt neu, damit die Kamera sauber neu startet
-  $('#btn-home').addEventListener('click', () => location.reload());
+  ['#btn-home', '#btn-home-2'].forEach(sel => {
+    const el = $(sel);
+    if (el) el.addEventListener('click', () => location.reload());
+  });
 
   // ---------- Start ----------
   $('#btn-start').addEventListener('click', async () => {
