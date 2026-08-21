@@ -277,7 +277,8 @@ AFRAME.registerComponent('smoothed-anchor', {
     // schneller bewegt niemand eine Karte vor der Kamera. Echte Fehlmessungen
     // springen um ein Vielfaches weiter und werden weiterhin abgefangen.
     // Gemessener Nachlauf bei 5 Kartenbreiten/s: bei 2.5 waren es 30 mm, jetzt 0.
-    maxSpeed:  { default: 25    },   // Kartenbreiten pro Sekunde
+    maxSpeed:  { default: 25    },   // zulässige Änderung der Geschwindigkeit
+    maxErr:    { default: 0.30  },   // Grundtoleranz in Kartenbreiten (27 mm)
     maxSpin:   { default: 25    },   // Bogenmaß pro Sekunde
     outlierMax:{ default: 2     },   // so viele Ausreißer, dann ist es echt
     // MindAR misst mit rund 30 Hz, gezeichnet wird mit 60. Jedes zweite Bild
@@ -356,22 +357,45 @@ AFRAME.registerComponent('smoothed-anchor', {
       const dt = dtAll;
 
       // Liegt eine neue Messung vor? Sonst zwischen zwei Messungen weiterrechnen.
-      // Zuerst prüfen, ob die Messung überhaupt plausibel ist. Früher lief die
-      // Geschwindigkeitsschätzung vorher — ein einzelner Ausreißer verdarb sie,
-      // und die Vorausberechnung schoss danach in die falsche Richtung.
-      const sprung = this.lastRaw.distanceTo(this.rp) / Math.max(dt, 1e-4);
-      if (sprung > this.data.maxSpeed && this.outliers < this.data.outlierMax) {
-        this.outliers++;
-        o.matrix.compose(this.p, this.q, this.s);
-        o.matrixWorldNeedsUpdate = true;
-        o.visible = true;
-        return;
-      }
-      this.outliers = 0;
+      // Die Zeit seit der letzten echten Messung wird bei jedem Bild
+      // mitgezählt — unabhängig davon, ob gerade vorausgerechnet wird.
+      // Vorher hing sie an der Vorausberechnung; dadurch war die Spanne oft
+      // nur ein Bild statt zwei, jede Bewegung erschien doppelt so schnell,
+      // und die Verfolgung brach schon bei 116 cm/s ab statt bei den
+      // eingestellten 25 Kartenbreiten pro Sekunde.
+      this.sinceMeasure += dt;
 
       const neu = this.lastRaw.distanceTo(this.rp) > 1e-7;
+
       if (neu) {
-        const span = Math.max(this.sinceMeasure + dt, 1 / 120);
+        const span = Math.max(this.sinceMeasure, 1 / 120);
+
+        // Plausibel ist, was zur bisherigen Bewegung passt — nicht, was langsam
+        // ist. Über die Geschwindigkeit allein ließen sich die Fälle nicht
+        // trennen: Ein Fehlmesswert aus der Ruhe springt mit 27 Kartenbreiten
+        // pro Sekunde, ein schneller Schwenk erreicht 20. Verglichen wird
+        // deshalb mit der aus der bisherigen Bewegung erwarteten Lage.
+        // Beim Schwenken trifft die Erwartung, der Fehler bleibt klein.
+        // Ein Sprung aus der Ruhe weicht stark ab und wird verworfen.
+        const erwX = this.lastRaw.x + this.vel.x * span;
+        const erwY = this.lastRaw.y + this.vel.y * span;
+        const erwZ = this.lastRaw.z + this.vel.z * span;
+        const fehler = Math.hypot(this.rp.x - erwX, this.rp.y - erwY, this.rp.z - erwZ);
+        // Erlaubt ist eine Grundtoleranz plus das, was die Karte bei ihrem
+        // bisherigen Tempo in dieser Zeit zurücklegen konnte. Im Stillstand
+        // ist die Schwelle eng, beim Schwenken weit.
+        const tempoAlt = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
+        const erlaubt  = this.data.maxErr + tempoAlt * span;
+
+        if (fehler > erlaubt && this.outliers < this.data.outlierMax) {
+          this.outliers++;
+          o.matrix.compose(this.p, this.q, this.s);
+          o.matrixWorldNeedsUpdate = true;
+          o.visible = true;
+          return;                       // sinceMeasure läuft weiter
+        }
+        this.outliers = 0;
+
         const k = this.data.velSmooth;
         this.vel.set(this.vel.x + ((this.rp.x - this.lastRaw.x) / span - this.vel.x) * k,
                      this.vel.y + ((this.rp.y - this.lastRaw.y) / span - this.vel.y) * k,
@@ -380,15 +404,15 @@ AFRAME.registerComponent('smoothed-anchor', {
         this.sinceMeasure = 0;
         this.target.copy(this.rp);
       } else {
-        // Nur bei echter Bewegung vorausrechnen. Im Stillstand liegt die
-        // geschätzte Geschwindigkeit unter der Schwelle und die Grafik bleibt
-        // exakt stehen, statt auf dem Rauschen zu zappeln.
+        // Zwischen zwei Messungen weiterrechnen — aber nur bei echter Bewegung.
+        // Im Stillstand liegt die geschätzte Geschwindigkeit unter der Schwelle,
+        // und die Grafik bleibt exakt stehen statt auf dem Rauschen zu zappeln.
         const tempo = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
         if (tempo >= this.data.velMin) {
-          this.sinceMeasure = Math.min(this.sinceMeasure + dt, this.data.predictMax);
-          this.target.set(this.rp.x + this.vel.x * this.sinceMeasure,
-                          this.rp.y + this.vel.y * this.sinceMeasure,
-                          this.rp.z + this.vel.z * this.sinceMeasure);
+          const vor = Math.min(this.sinceMeasure, this.data.predictMax);
+          this.target.set(this.rp.x + this.vel.x * vor,
+                          this.rp.y + this.vel.y * vor,
+                          this.rp.z + this.vel.z * vor);
         } else {
           this.target.copy(this.rp);
         }
