@@ -268,8 +268,8 @@ AFRAME.registerComponent('smoothed-anchor', {
     tauMove:   { default: 0.002 },   // Sekunden — Glättung während Bewegung
     // Totband: Messrauschen unterhalb dieser Schwelle wird ignoriert.
     // 3 ‰ der Kartenbreite sind 0,27 mm — auf dem Bildschirm gut ein Pixel.
-    dead:      { default: 0.003  },  // Totband in Kartenbreiten
-    deadAng:   { default: 0.005  },  // Totband für Drehung, Bogenmaß (0,29°)
+    dead:      { default: 0.006  },  // Totband in Kartenbreiten (0,53 mm)
+    deadAng:   { default: 0.008  },  // Totband für Drehung, Bogenmaß (0,46°)
     // Ab welcher Geschwindigkeit die Glättung nachlässt. Klein = folgt auch
     // langsamen Bewegungen sofort.
     speedRef:  { default: 0.08  },
@@ -284,12 +284,15 @@ AFRAME.registerComponent('smoothed-anchor', {
     // bekäme also denselben Wert — eine sichtbare Treppe. Zwischen zwei
     // Messungen wird deshalb mit der zuletzt gemessenen Geschwindigkeit
     // weitergerechnet, höchstens aber diese Zeitspanne lang.
-    predictMax:{ default: 0.055 },   // Sekunden
+    // Bei 30 Hz Messung und 60 Hz Darstellung genügt gut ein Bild Vorlauf.
+    // Mehr würde beim abrupten Anhalten sichtbar überschwingen: gemessen
+    // 6,2 mm bei 55 ms, 2,0 mm bei 20 ms.
+    predictMax:{ default: 0.020 },   // Sekunden
     coastMax:  { default: 0.20  },   // so lange nach Kartenverlust weiterlaufen
     // Die Geschwindigkeit wird über mehrere Messungen gemittelt. Ungeglättet
     // wäre sie fast nur Messrauschen — und die Vorausberechnung würde dieses
     // Rauschen verstärken statt die Bewegung zu glätten.
-    velSmooth: { default: 0.30  },   // Anteil der neuen Messung
+    velSmooth: { default: 0.50  },   // Anteil der neuen Messung
     velMin:    { default: 0.30  }    // darunter gilt es als Stillstand
   },
   init() {
@@ -353,6 +356,19 @@ AFRAME.registerComponent('smoothed-anchor', {
       const dt = dtAll;
 
       // Liegt eine neue Messung vor? Sonst zwischen zwei Messungen weiterrechnen.
+      // Zuerst prüfen, ob die Messung überhaupt plausibel ist. Früher lief die
+      // Geschwindigkeitsschätzung vorher — ein einzelner Ausreißer verdarb sie,
+      // und die Vorausberechnung schoss danach in die falsche Richtung.
+      const sprung = this.lastRaw.distanceTo(this.rp) / Math.max(dt, 1e-4);
+      if (sprung > this.data.maxSpeed && this.outliers < this.data.outlierMax) {
+        this.outliers++;
+        o.matrix.compose(this.p, this.q, this.s);
+        o.matrixWorldNeedsUpdate = true;
+        o.visible = true;
+        return;
+      }
+      this.outliers = 0;
+
       const neu = this.lastRaw.distanceTo(this.rp) > 1e-7;
       if (neu) {
         const span = Math.max(this.sinceMeasure + dt, 1 / 120);
@@ -381,29 +397,31 @@ AFRAME.registerComponent('smoothed-anchor', {
       const moved = this.p.distanceTo(this.target);
       const ang   = this.q.angleTo(this.rq);
 
-      // Sprungunterdrückung: Ist die Marke merkmalsarm, liefert die Erkennung
-      // gelegentlich eine völlig andere Lage — ein Bild lang. Solche Ausreißer
-      // werden verworfen. Kommen mehrere hintereinander, ist es eine echte
-      // Bewegung und wird übernommen.
-      const zuSchnell = moved / dt > this.data.maxSpeed ||
-                        ang   / dt > this.data.maxSpin;
-      if (zuSchnell && this.outliers < this.data.outlierMax) {
-        this.outliers++;
-        o.matrix.compose(this.p, this.q, this.s);
-        o.matrixWorldNeedsUpdate = true;
-        o.visible = true;
-        return;
-      }
-      this.outliers = 0;
+      // Weiches Totband statt harter Schwelle.
+      // Ein hartes Totband hält die Grafik still, bis das Rauschen die Schwelle
+      // überschreitet — dann ruckt sie auf einen Schlag nach. Gemessen: alle
+      // zehn Sekunden ein sichtbarer Ruck von 0,2 mm. Hier wird der Abstand
+      // stattdessen um das Totband verkürzt: kleine Abweichungen schrumpfen
+      // stetig auf null, große bleiben nahezu unverändert. Kein Schwellwert,
+      // der überschritten werden kann, also auch kein Nachrucken.
+      // Das Totband soll Rauschen im Stillstand schlucken, nicht echte Bewegung
+      // bremsen. Es wird deshalb ausgeblendet, sobald die Karte sich bewegt.
+      const tempoNow = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
+      const ruhe     = Math.exp(-tempoNow / this.data.velMin);
+      const dz    = this.data.dead    * ruhe;
+      const dzAng = this.data.deadAng * ruhe;
 
-      if (moved >= this.data.dead || ang >= this.data.deadAng) {
+      const wirkt    = moved > 0 ? Math.max(0, moved - dz)    / moved : 0;
+      const wirktAng = ang   > 0 ? Math.max(0, ang   - dzAng) / ang   : 0;
+
+      if (wirkt > 0 || wirktAng > 0) {
         const speed = this.pp.distanceTo(this.target) / dt;
         this.pp.copy(this.target);
         const tau = this.data.tauMove +
                     (this.data.tauRest - this.data.tauMove) * Math.exp(-speed / this.data.speedRef);
         const a = 1 - Math.exp(-dt / tau);
-        this.p.lerp(this.target, a);
-        this.q.slerp(this.rq, a);
+        if (wirkt    > 0) this.p.lerp(this.target, a * wirkt);
+        if (wirktAng > 0) this.q.slerp(this.rq, a * wirktAng);
         this.s.lerp(this.rs, a);
       }
       o.visible = true;
