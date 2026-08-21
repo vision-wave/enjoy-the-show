@@ -289,12 +289,17 @@ AFRAME.registerComponent('smoothed-anchor', {
     // Mehr würde beim abrupten Anhalten sichtbar überschwingen: gemessen
     // 6,2 mm bei 55 ms, 2,0 mm bei 20 ms.
     predictMax:{ default: 0.020 },   // Sekunden
-    coastMax:  { default: 0.20  },   // so lange nach Kartenverlust weiterlaufen
+    coastMax:  { default: 0.35  },   // so lange nach Kartenverlust weiterlaufen
     // Die Geschwindigkeit wird über mehrere Messungen gemittelt. Ungeglättet
     // wäre sie fast nur Messrauschen — und die Vorausberechnung würde dieses
     // Rauschen verstärken statt die Bewegung zu glätten.
     velSmooth: { default: 0.50  },   // Anteil der neuen Messung
-    velMin:    { default: 0.30  }    // darunter gilt es als Stillstand
+    velMin:    { default: 0.30  },   // darunter gilt es als Stillstand
+    // Alle Distanzschwellen gelten für diesen Kameraabstand (in Kartenbreiten)
+    // und werden sonst proportional mitskaliert. Ein Pixel Messfehler im Bild
+    // entspricht bei doppelter Entfernung doppelter Weltdistanz — feste
+    // Schwellen wären nah zu weit und fern zu eng.
+    refDist:   { default: 2.0   }
   },
   init() {
     const T = THREE;
@@ -309,6 +314,8 @@ AFRAME.registerComponent('smoothed-anchor', {
     this.started = false;
     this.outliers = 0;
     this.activeSrc = null;
+    // Kennzahlen für die Statusanzeige
+    this.stats = { abstand: 0, verworfen: 0, aussetzer: 0, messungen: 0, bilder: 0 };
     this.el.object3D.matrixAutoUpdate = false;
   },
   tick(time, delta) {
@@ -327,6 +334,7 @@ AFRAME.registerComponent('smoothed-anchor', {
       // Kurze Aussetzer überbrücken: mit der zuletzt gemessenen Geschwindigkeit
       // weiterlaufen, statt die Grafik sofort verschwinden zu lassen.
       if (o.visible && this.started && this.coast < this.data.coastMax) {
+        if (this.coast === 0) this.stats.aussetzer++;
         this.coast += dtAll;
         this.p.x += this.vel.x * dtAll;
         this.p.y += this.vel.y * dtAll;
@@ -365,6 +373,12 @@ AFRAME.registerComponent('smoothed-anchor', {
       // eingestellten 25 Kartenbreiten pro Sekunde.
       this.sinceMeasure += dt;
 
+      // Maßstab aus der aktuellen Kameraentfernung
+      const abstand = Math.hypot(this.rp.x, this.rp.y, this.rp.z);
+      const skala   = Math.max(0.3, abstand / this.data.refDist);
+      this.stats.abstand = abstand;
+      this.stats.bilder++;
+
       const neu = this.lastRaw.distanceTo(this.rp) > 1e-7;
 
       if (neu) {
@@ -385,10 +399,11 @@ AFRAME.registerComponent('smoothed-anchor', {
         // bisherigen Tempo in dieser Zeit zurücklegen konnte. Im Stillstand
         // ist die Schwelle eng, beim Schwenken weit.
         const tempoAlt = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
-        const erlaubt  = this.data.maxErr + tempoAlt * span;
+        const erlaubt  = this.data.maxErr * skala + tempoAlt * span;
 
         if (fehler > erlaubt && this.outliers < this.data.outlierMax) {
           this.outliers++;
+          this.stats.verworfen++;
           o.matrix.compose(this.p, this.q, this.s);
           o.matrixWorldNeedsUpdate = true;
           o.visible = true;
@@ -403,12 +418,13 @@ AFRAME.registerComponent('smoothed-anchor', {
         this.lastRaw.copy(this.rp);
         this.sinceMeasure = 0;
         this.target.copy(this.rp);
+        this.stats.messungen++;
       } else {
         // Zwischen zwei Messungen weiterrechnen — aber nur bei echter Bewegung.
         // Im Stillstand liegt die geschätzte Geschwindigkeit unter der Schwelle,
         // und die Grafik bleibt exakt stehen statt auf dem Rauschen zu zappeln.
         const tempo = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
-        if (tempo >= this.data.velMin) {
+        if (tempo >= this.data.velMin * skala) {
           const vor = Math.min(this.sinceMeasure, this.data.predictMax);
           this.target.set(this.rp.x + this.vel.x * vor,
                           this.rp.y + this.vel.y * vor,
@@ -431,9 +447,9 @@ AFRAME.registerComponent('smoothed-anchor', {
       // Das Totband soll Rauschen im Stillstand schlucken, nicht echte Bewegung
       // bremsen. Es wird deshalb ausgeblendet, sobald die Karte sich bewegt.
       const tempoNow = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
-      const ruhe     = Math.exp(-tempoNow / this.data.velMin);
-      const dz    = this.data.dead    * ruhe;
-      const dzAng = this.data.deadAng * ruhe;
+      const ruhe     = Math.exp(-tempoNow / (this.data.velMin * skala));
+      const dz    = this.data.dead * skala * ruhe;
+      const dzAng = this.data.deadAng * ruhe;   // Winkel ist entfernungsunabhängig
 
       const wirkt    = moved > 0 ? Math.max(0, moved - dz)    / moved : 0;
       const wirktAng = ang   > 0 ? Math.max(0, ang   - dzAng) / ang   : 0;
@@ -938,6 +954,30 @@ AFRAME.registerComponent('smoothed-anchor', {
     .catch(() => { state.mind = 'FEHLT'; })
     .finally(renderDiag);
 
+  // Zeigt, was die Erkennung tatsächlich liefert: Abstand, Messrate,
+  // verworfene Fehlmessungen und Aussetzer. Ohne diese Zahlen lässt sich
+  // nicht unterscheiden, ob die Glättung bremst oder die Erkennung aussetzt.
+  let letzteStats = null, letzteZeit = 0;
+  function trackLine() {
+    const k = $('#anchor') && $('#anchor').components &&
+              $('#anchor').components['smoothed-anchor'];
+    if (!k || !k.stats) return 'Erkennung: <span class="bad">keine Daten</span>';
+    const s = k.stats, jetzt = performance.now();
+    let rate = '–';
+    if (letzteStats && jetzt > letzteZeit) {
+      const sek = (jetzt - letzteZeit) / 1000;
+      rate = ((s.messungen - letzteStats.messungen) / sek).toFixed(0) + '/s';
+    }
+    letzteStats = { messungen: s.messungen }; letzteZeit = jetzt;
+    const gut = s.abstand > 0;
+    return 'Abstand: <span class="' + (gut ? 'ok' : 'bad') + '">' +
+             s.abstand.toFixed(2) + ' Kartenbreiten</span><br>' +
+           'Messrate: <span class="ok">' + rate + '</span><br>' +
+           'verworfen: <span class="' + (s.verworfen < 20 ? 'ok' : 'bad') + '">' +
+             s.verworfen + '</span>  ·  Aussetzer: <span class="' +
+             (s.aussetzer < 10 ? 'ok' : 'bad') + '">' + s.aussetzer + '</span>';
+  }
+
   function renderDiag() {
     const box = $('#diag');
     if ($('#diag-layer').classList.contains('hidden')) return;
@@ -951,6 +991,7 @@ AFRAME.registerComponent('smoothed-anchor', {
                           : 'kein Video-Element', !!(v && v.videoWidth)),
       line('Tracking', state.target, state.target === 'erkannt'),
       line('Marken', document.querySelectorAll('[mindar-image-target]').length + ' angelegt', true),
+      trackLine(),
       line('Foto', photoB64 ? Math.round(photoB64.length / 1365) + ' KB'
                             : (CONFIG.photo ? 'nicht gefunden' : 'nicht konfiguriert'),
            !!photoB64),
@@ -966,7 +1007,8 @@ AFRAME.registerComponent('smoothed-anchor', {
 
   function showDiag(on) {
     $('#diag-layer').classList.toggle('hidden', !on);
-    if (on) renderDiag();
+    clearInterval(diagTimer);
+    if (on) { renderDiag(); diagTimer = setInterval(renderDiag, 1000); }
   }
   // Regler mit den aktuellen Werten füllen und live anwenden
   const fitS = $('#fit-s'), fitX = $('#fit-x'), fitY = $('#fit-y');
@@ -988,6 +1030,7 @@ AFRAME.registerComponent('smoothed-anchor', {
   [fitS, fitX, fitY].forEach(r => r.addEventListener('input', updateFit));
   updateFit();
 
+  let diagTimer = null;
   $('#btn-diag').addEventListener('click', () => showDiag(true));
   $('#diag-close').addEventListener('click', () => showDiag(false));
   // Tippen auf den abgedunkelten Bereich schließt ebenfalls
