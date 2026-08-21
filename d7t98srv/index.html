@@ -238,7 +238,7 @@ const CONFIG = {
   filterMinCF : 0.001,
   filterBeta  : 15,
   warmup      : 1,    // Bilder, die stimmen müssen, bevor eingeblendet wird
-  miss        : 12,   // Bilder ohne Fund, bevor ausgeblendet wird
+  miss        : 20,   // Bilder ohne Fund, bevor MindAR die Marke aufgibt
 
   // ----- Deckung des Overlays auf der Karte -----
   // 1.0 = so groß wie die kompilierte Bildmarke. Deckt das Overlay die Karte
@@ -279,13 +279,29 @@ AFRAME.registerComponent('smoothed-anchor', {
     // Gemessener Nachlauf bei 5 Kartenbreiten/s: bei 2.5 waren es 30 mm, jetzt 0.
     maxSpeed:  { default: 25    },   // Kartenbreiten pro Sekunde
     maxSpin:   { default: 25    },   // Bogenmaß pro Sekunde
-    outlierMax:{ default: 2     }    // so viele Ausreißer, dann ist es echt
+    outlierMax:{ default: 2     },   // so viele Ausreißer, dann ist es echt
+    // MindAR misst mit rund 30 Hz, gezeichnet wird mit 60. Jedes zweite Bild
+    // bekäme also denselben Wert — eine sichtbare Treppe. Zwischen zwei
+    // Messungen wird deshalb mit der zuletzt gemessenen Geschwindigkeit
+    // weitergerechnet, höchstens aber diese Zeitspanne lang.
+    predictMax:{ default: 0.055 },   // Sekunden
+    coastMax:  { default: 0.20  },   // so lange nach Kartenverlust weiterlaufen
+    // Die Geschwindigkeit wird über mehrere Messungen gemittelt. Ungeglättet
+    // wäre sie fast nur Messrauschen — und die Vorausberechnung würde dieses
+    // Rauschen verstärken statt die Bewegung zu glätten.
+    velSmooth: { default: 0.30  },   // Anteil der neuen Messung
+    velMin:    { default: 0.30  }    // darunter gilt es als Stillstand
   },
   init() {
     const T = THREE;
     this.p = new T.Vector3(); this.q = new T.Quaternion(); this.s = new T.Vector3(1,1,1);
     this.rp = new T.Vector3(); this.rq = new T.Quaternion(); this.rs = new T.Vector3(1,1,1);
     this.pp = new T.Vector3();
+    this.lastRaw = new T.Vector3();     // letzte echte Messung
+    this.vel     = new T.Vector3();     // geschätzte Geschwindigkeit
+    this.target  = new T.Vector3();     // Ziel inklusive Vorausberechnung
+    this.sinceMeasure = 0;              // Zeit seit der letzten echten Messung
+    this.coast = 0;                     // Zeit ohne Marke im Bild
     this.started = false;
     this.outliers = 0;
     this.activeSrc = null;
@@ -301,11 +317,26 @@ AFRAME.registerComponent('smoothed-anchor', {
 
     const o = this.el.object3D;
 
+    const dtAll = Math.min((delta || 16.7) / 1000, 0.1);
+
     if (!src) {
+      // Kurze Aussetzer überbrücken: mit der zuletzt gemessenen Geschwindigkeit
+      // weiterlaufen, statt die Grafik sofort verschwinden zu lassen.
+      if (o.visible && this.started && this.coast < this.data.coastMax) {
+        this.coast += dtAll;
+        this.p.x += this.vel.x * dtAll;
+        this.p.y += this.vel.y * dtAll;
+        this.p.z += this.vel.z * dtAll;
+        o.matrix.compose(this.p, this.q, this.s);
+        o.matrixWorldNeedsUpdate = true;
+        return;
+      }
       if (o.visible) { o.visible = false; this.started = false; this.outliers = 0; }
       this.activeSrc = null;
+      this.coast = 0;
       return;
     }
+    this.coast = 0;
     if (src !== this.activeSrc) { this.activeSrc = src; this.started = false; this.outliers = 0; }
 
     const so = src.object3D;
@@ -315,10 +346,39 @@ AFRAME.registerComponent('smoothed-anchor', {
 
     if (!this.started) {                       // erster Fund: ohne Übergang setzen
       this.p.copy(this.rp); this.q.copy(this.rq); this.s.copy(this.rs);
-      this.pp.copy(this.rp); this.started = true; o.visible = true;
+      this.pp.copy(this.rp); this.lastRaw.copy(this.rp);
+      this.vel.set(0, 0, 0); this.sinceMeasure = 0;
+      this.started = true; o.visible = true;
     } else {
-      const dt = Math.min((delta || 16.7) / 1000, 0.1);
-      const moved = this.p.distanceTo(this.rp);
+      const dt = dtAll;
+
+      // Liegt eine neue Messung vor? Sonst zwischen zwei Messungen weiterrechnen.
+      const neu = this.lastRaw.distanceTo(this.rp) > 1e-7;
+      if (neu) {
+        const span = Math.max(this.sinceMeasure + dt, 1 / 120);
+        const k = this.data.velSmooth;
+        this.vel.set(this.vel.x + ((this.rp.x - this.lastRaw.x) / span - this.vel.x) * k,
+                     this.vel.y + ((this.rp.y - this.lastRaw.y) / span - this.vel.y) * k,
+                     this.vel.z + ((this.rp.z - this.lastRaw.z) / span - this.vel.z) * k);
+        this.lastRaw.copy(this.rp);
+        this.sinceMeasure = 0;
+        this.target.copy(this.rp);
+      } else {
+        // Nur bei echter Bewegung vorausrechnen. Im Stillstand liegt die
+        // geschätzte Geschwindigkeit unter der Schwelle und die Grafik bleibt
+        // exakt stehen, statt auf dem Rauschen zu zappeln.
+        const tempo = Math.hypot(this.vel.x, this.vel.y, this.vel.z);
+        if (tempo >= this.data.velMin) {
+          this.sinceMeasure = Math.min(this.sinceMeasure + dt, this.data.predictMax);
+          this.target.set(this.rp.x + this.vel.x * this.sinceMeasure,
+                          this.rp.y + this.vel.y * this.sinceMeasure,
+                          this.rp.z + this.vel.z * this.sinceMeasure);
+        } else {
+          this.target.copy(this.rp);
+        }
+      }
+
+      const moved = this.p.distanceTo(this.target);
       const ang   = this.q.angleTo(this.rq);
 
       // Sprungunterdrückung: Ist die Marke merkmalsarm, liefert die Erkennung
@@ -337,12 +397,12 @@ AFRAME.registerComponent('smoothed-anchor', {
       this.outliers = 0;
 
       if (moved >= this.data.dead || ang >= this.data.deadAng) {
-        const speed = this.pp.distanceTo(this.rp) / dt;
-        this.pp.copy(this.rp);
+        const speed = this.pp.distanceTo(this.target) / dt;
+        this.pp.copy(this.target);
         const tau = this.data.tauMove +
                     (this.data.tauRest - this.data.tauMove) * Math.exp(-speed / this.data.speedRef);
         const a = 1 - Math.exp(-dt / tau);
-        this.p.lerp(this.rp, a);
+        this.p.lerp(this.target, a);
         this.q.slerp(this.rq, a);
         this.s.lerp(this.rs, a);
       }
